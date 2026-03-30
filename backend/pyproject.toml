@@ -27,7 +27,10 @@ dependencies = [
 
 [project.optional-dependencies]
 worker = [
+  "numpy>=1.26.0,<3.0.0",
+  "onnxruntime>=1.20.0,<2.0.0",
   "pillow>=10.4.0,<11.0.0",
+  "google-cloud-compute>=1.19.0,<2.0.0",
   "torch>=2.6.0,<3.0.0",
   "transformers>=4.51.0,<5.0.0",
 ]

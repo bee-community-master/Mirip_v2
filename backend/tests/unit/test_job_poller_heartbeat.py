@@ -75,3 +75,59 @@ async def test_job_poller_keeps_lease_alive_during_long_evaluation() -> None:
     assert completed.status == JobStatus.SUCCEEDED
     stored_result = await result_repository.get_by_job_id("job-heartbeat")
     assert stored_result is not None
+
+
+async def test_job_poller_can_target_specific_job_id() -> None:
+    store = MemoryDocumentStore()
+    job_repository = DocumentDiagnosisJobRepository(store)
+    result_repository = DocumentDiagnosisResultRepository(store)
+    now = utc_now()
+    await job_repository.create(
+        DiagnosisJob(
+            id="job-other",
+            user_id="user-1",
+            upload_ids=["upl-1"],
+            job_type="evaluate",
+            department="visual_design",
+            include_feedback=True,
+            theme=None,
+            language="ko",
+            status=JobStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await job_repository.create(
+        DiagnosisJob(
+            id="job-target",
+            user_id="user-1",
+            upload_ids=["upl-2"],
+            job_type="evaluate",
+            department="visual_design",
+            include_feedback=True,
+            theme=None,
+            language="ko",
+            status=JobStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    poller = JobPoller(
+        worker_id="worker-1",
+        queue=JobQueueService(
+            JobSettings(lease_seconds=2, heartbeat_interval_seconds=1, max_attempts=3),
+            job_repository,
+        ),
+        inference_service=HeartbeatAwareInferenceService(job_repository),
+        result_writer=DiagnosisResultWriter(result_repository),
+        target_job_id="job-target",
+    )
+
+    completed = await poller.process_once()
+
+    assert completed is not None
+    assert completed.id == "job-target"
+    untouched = await job_repository.get("job-other")
+    assert untouched is not None
+    assert untouched.status == JobStatus.QUEUED

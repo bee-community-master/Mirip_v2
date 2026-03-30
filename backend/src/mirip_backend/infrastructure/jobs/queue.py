@@ -25,6 +25,13 @@ class JobQueueService:
             worker_id=worker_id, lease_until=self._lease_until()
         )
 
+    async def lease_job(self, job_id: str, *, worker_id: str) -> DiagnosisJob | None:
+        return await self.repository.lease_job(
+            job_id,
+            worker_id=worker_id,
+            lease_until=self._lease_until(),
+        )
+
     async def mark_running(self, job: DiagnosisJob) -> DiagnosisJob:
         updated = replace(
             job,

@@ -47,7 +47,12 @@ async def test_diagnosis_job_flow(
     poller = JobPoller(
         worker_id="test-worker",
         queue=container.job_queue,
-        inference_service=GpuInferenceService(mode="stub", model_uri=None),
+        inference_service=GpuInferenceService(
+            mode="stub",
+            model_uri=None,
+            storage_service=container.storage_service,
+            local_model_cache_dir="/tmp/mirip-model-cache-test",
+        ),
         result_writer=DiagnosisResultWriter(container.diagnosis_result_repository),
     )
     await poller.process_once()

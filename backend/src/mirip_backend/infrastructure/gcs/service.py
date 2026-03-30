@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from mirip_backend.domain.common.models import HealthDependency, SignedUploadSession
@@ -87,6 +88,41 @@ class GCSStorageService:
             return await asyncio.to_thread(_blob_exists)
         except Exception as exc:
             raise DependencyError("GCS object lookup failed") from exc
+
+    async def download_tree(self, *, gcs_uri: str, destination_dir: str | Path) -> list[Path]:
+        if not gcs_uri.startswith("gs://"):
+            raise ValueError(f"Unsupported GCS URI: {gcs_uri}")
+        if self.backend == "fake":
+            raise DependencyError("GCS download is unavailable when storage backend is fake")
+
+        bucket_name, prefix = self._split_gs_uri(gcs_uri)
+        destination = Path(destination_dir)
+
+        def _download() -> list[Path]:
+            destination.mkdir(parents=True, exist_ok=True)
+            client = self._client()
+            bucket = client.bucket(bucket_name)
+            downloaded: list[Path] = []
+            for blob in client.list_blobs(bucket, prefix=prefix):
+                if blob.name.endswith("/"):
+                    continue
+                relative = blob.name[len(prefix):].lstrip("/") if prefix else blob.name
+                target = destination / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                blob.download_to_filename(str(target))
+                downloaded.append(target)
+            return downloaded
+
+        try:
+            return await asyncio.to_thread(_download)
+        except Exception as exc:
+            raise DependencyError("GCS model bundle download failed") from exc
+
+    @staticmethod
+    def _split_gs_uri(gcs_uri: str) -> tuple[str, str]:
+        remainder = gcs_uri.removeprefix("gs://")
+        bucket, _, prefix = remainder.partition("/")
+        return bucket, prefix
 
     async def check(self) -> HealthDependency:
         if self.backend == "fake" or self.settings.bucket_name is None:

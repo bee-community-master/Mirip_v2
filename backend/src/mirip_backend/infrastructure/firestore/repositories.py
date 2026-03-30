@@ -186,6 +186,21 @@ class DocumentDiagnosisJobRepository:
             return leased
         return None
 
+    async def lease_job(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> DiagnosisJob | None:
+        job = await self.get(job_id)
+        if job is None:
+            return None
+        if not self._is_lease_candidate(job, now=utc_now()):
+            return None
+        leased = self._build_leased_job(job, worker_id=worker_id, lease_until=lease_until)
+        return await self.update(leased)
+
     def _lease_next_ready_job_firestore(
         self,
         worker_id: str,
