@@ -226,6 +226,14 @@ class DiagnosisRuntimeResult:
 
 
 @dataclass(slots=True)
+class RankedProjectedFeature:
+    tier: str
+    confidence: float
+    win_rates: dict[str, float]
+    raw_score: float
+
+
+@dataclass(slots=True)
 class DiagnosisBundleRuntime:
     preprocessor: ImagePreprocessor
     scoring_head: DiagnosisScoringHead
@@ -277,14 +285,13 @@ class DiagnosisBundleRuntime:
                 f"[N, {self.scoring_head.feature_dim}], got {tuple(feature_tensor.shape)}"
             )
         projected = self.scoring_head.project_features(feature_tensor)
-        raw_score = float(self.scoring_head.score_projected(projected).squeeze().item())
-        tier, confidence, win_rates = self._rank_projected_feature(projected)
-        scores = self._derive_legacy_scores(projected.squeeze(0), win_rates)
+        ranked_feature = self._rank_projected_feature(projected)
+        scores = self._derive_legacy_scores(projected.squeeze(0), ranked_feature.win_rates)
         return DiagnosisRuntimeResult(
-            tier=tier,
-            confidence=round(confidence, 4),
-            win_rates=win_rates,
-            raw_score=raw_score,
+            tier=ranked_feature.tier,
+            confidence=round(ranked_feature.confidence, 4),
+            win_rates=ranked_feature.win_rates,
+            raw_score=ranked_feature.raw_score,
             scores=scores,
         )
 
@@ -298,7 +305,7 @@ class DiagnosisBundleRuntime:
     def _rank_projected_feature(
         self,
         projected_feature: torch.Tensor,
-    ) -> tuple[str, float, dict[str, float]]:
+    ) -> RankedProjectedFeature:
         input_score = float(self.scoring_head.score_projected(projected_feature).squeeze().item())
         win_rates: dict[str, float] = {}
 
@@ -311,12 +318,32 @@ class DiagnosisBundleRuntime:
             win_rates[tier] = wins / max(anchor_features.shape[0], 1)
 
         if win_rates.get("S", 0.0) >= 0.5:
-            return "S", win_rates["S"], win_rates
+            return RankedProjectedFeature(
+                tier="S",
+                confidence=win_rates["S"],
+                win_rates=win_rates,
+                raw_score=input_score,
+            )
         if win_rates.get("A", 0.0) >= 0.5:
-            return "A", win_rates["A"], win_rates
+            return RankedProjectedFeature(
+                tier="A",
+                confidence=win_rates["A"],
+                win_rates=win_rates,
+                raw_score=input_score,
+            )
         if win_rates.get("B", 0.0) >= 0.5:
-            return "B", win_rates["B"], win_rates
-        return "C", 1.0 - win_rates.get("C", 0.0), win_rates
+            return RankedProjectedFeature(
+                tier="B",
+                confidence=win_rates["B"],
+                win_rates=win_rates,
+                raw_score=input_score,
+            )
+        return RankedProjectedFeature(
+            tier="C",
+            confidence=1.0 - win_rates.get("C", 0.0),
+            win_rates=win_rates,
+            raw_score=input_score,
+        )
 
     def _derive_legacy_scores(
         self,

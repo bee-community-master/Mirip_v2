@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
+from mirip_backend.domain.diagnosis.metadata import INPUT_OBJECT_NAMES_METADATA_KEY
 from mirip_backend.infrastructure.gcs.service import GCSStorageService
 from mirip_backend.worker.inference.diagnosis_runtime import DiagnosisBundleRuntime
 from mirip_backend.worker.inference.model_bundle import (
@@ -168,15 +169,16 @@ class WorkerInferenceService:
 
     @staticmethod
     def _extract_input_object_names(job: DiagnosisJob) -> list[str]:
-        object_names = job.metadata.get("input_object_names")
+        object_names = job.metadata.get(INPUT_OBJECT_NAMES_METADATA_KEY)
         if not isinstance(object_names, list) or not object_names:
             raise NonRetryableInferenceError(
-                "Diagnosis job metadata is missing input_object_names"
+                f"Diagnosis job metadata is missing {INPUT_OBJECT_NAMES_METADATA_KEY}"
             )
         normalized = [str(value) for value in object_names if str(value).strip()]
         if not normalized:
             raise NonRetryableInferenceError(
-                "Diagnosis job metadata does not contain any usable input_object_names"
+                "Diagnosis job metadata does not contain any usable "
+                f"{INPUT_OBJECT_NAMES_METADATA_KEY}"
             )
         return normalized
 
