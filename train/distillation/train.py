@@ -70,6 +70,8 @@ def _peek_batch(dataset: object, batch_size: int) -> dict[str, Any]:
 
 
 def validate_data(config, report_path: str | None = None) -> dict[str, Any]:
+    """Builds a minimal sample batch to verify staged data availability and split wiring."""
+
     stages = config.active_stages()
     if not stages:
         raise RuntimeError("No enabled stages are configured for distillation")
@@ -105,6 +107,8 @@ def validate_data(config, report_path: str | None = None) -> dict[str, Any]:
 
 
 def main() -> int:
+    """CLI entry point for distillation training and lightweight data validation."""
+
     args = parse_args()
     config = load_config(args.config)
     config = apply_runtime_overrides(config, smoke=args.smoke, resume_from=args.resume)

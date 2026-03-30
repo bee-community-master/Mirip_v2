@@ -290,10 +290,15 @@ def evaluate_checkpoint(
     stage_name: str | None,
     max_batches: int | None,
 ) -> dict[str, Any]:
+    """Runs offline evaluation for one distilled checkpoint and stores a JSON report."""
+
     device = select_device(config.experiment.device)
     checkpoint_payload = torch.load(checkpoint_path, map_location=device)
     stage = _resolve_stage(config, checkpoint_payload, stage_name)
-    model = TeacherStudentDistillModel(config.models)
+    model = TeacherStudentDistillModel(
+        config.models,
+        normalize_features=config.distillation.normalize_features,
+    )
     model.load_checkpoint_state(checkpoint_payload["model"])
     model.to(device)
     model.eval()
@@ -401,6 +406,8 @@ def evaluate_checkpoint(
 
 
 def main() -> int:
+    """CLI entry point for checkpoint evaluation."""
+
     args = parse_args()
     config = load_config(args.config)
     config = apply_runtime_overrides(config, smoke=args.smoke)

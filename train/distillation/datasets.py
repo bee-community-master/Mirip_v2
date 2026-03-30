@@ -26,6 +26,8 @@ DEFAULT_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 @dataclass(frozen=True)
 class DistillRecord:
+    """Normalized image-level record used by training and evaluation pipelines."""
+
     sample_id: str
     image_path: str
     split: str
@@ -46,6 +48,8 @@ class DistillRecord:
 
 
 class RecordSource(ABC):
+    """Abstract interface for loading distillation samples from different storage layouts."""
+
     @abstractmethod
     def load_records(self) -> list[DistillRecord]:
         raise NotImplementedError
@@ -69,7 +73,25 @@ def _build_prepared_split_lookup(train_csv: str | Path, val_csv: str | Path) -> 
     return lookup
 
 
+def _resolve_hash_split(bucket: float, *, train_ratio: float, val_ratio: float) -> str | None:
+    if bucket < train_ratio:
+        return "train"
+    if bucket < (train_ratio + val_ratio):
+        return "val"
+    return None
+
+
+def _resolve_webdataset_url_pattern(url_pattern: str, split: str) -> str:
+    if "{split}" not in url_pattern:
+        raise ValueError(
+            "webdataset_url_pattern must include a '{split}' placeholder to avoid train/val leakage"
+        )
+    return url_pattern.format(split=split)
+
+
 class MiripStagedSource(RecordSource):
+    """Loads image records from Mirip staged metadata JSON files."""
+
     def __init__(self, config: DistillationExperimentConfig) -> None:
         self.config = config
         self.metadata_dir = resolve_train_path(config.paths.metadata_dir)
@@ -80,15 +102,20 @@ class MiripStagedSource(RecordSource):
                 config.paths.prepared_val_csv,
             )
 
-    def _resolve_split(self, image_path: str, payload: dict[str, Any]) -> tuple[str, dict[str, str] | None]:
+    def _resolve_split(self, image_path: str, payload: dict[str, Any]) -> tuple[str | None, dict[str, str] | None]:
         if image_path in self.prepared_lookup:
             split, row = self.prepared_lookup[image_path]
             return split, row
         split_key = str(payload.get("post_no") or image_path)
         bucket = deterministic_split_bucket(split_key, salt=self.config.data.split_salt)
-        if bucket < self.config.data.train_ratio:
-            return "train", None
-        return "val", None
+        return (
+            _resolve_hash_split(
+                bucket,
+                train_ratio=self.config.data.train_ratio,
+                val_ratio=self.config.data.val_ratio,
+            ),
+            None,
+        )
 
     def load_records(self) -> list[DistillRecord]:
         records: list[DistillRecord] = []
@@ -102,6 +129,8 @@ class MiripStagedSource(RecordSource):
                 if normalized_path is None:
                     continue
                 split, prepared_row = self._resolve_split(normalized_path, payload)
+                if split is None:
+                    continue
                 department = str(
                     payload.get("department")
                     or payload.get("normalized_dept")
@@ -126,9 +155,12 @@ class MiripStagedSource(RecordSource):
 
 
 class ImageFolderSource(RecordSource):
-    def __init__(self, root: str | Path, *, train_ratio: float, split_salt: str) -> None:
+    """Loads image records from a plain image folder tree."""
+
+    def __init__(self, root: str | Path, *, train_ratio: float, val_ratio: float, split_salt: str) -> None:
         self.root = resolve_train_path(root)
         self.train_ratio = train_ratio
+        self.val_ratio = val_ratio
         self.split_salt = split_salt
 
     def load_records(self) -> list[DistillRecord]:
@@ -138,7 +170,9 @@ class ImageFolderSource(RecordSource):
                 continue
             relative = image_path.relative_to(self.root)
             bucket = deterministic_split_bucket(str(relative), salt=self.split_salt)
-            split = "train" if bucket < self.train_ratio else "val"
+            split = _resolve_hash_split(bucket, train_ratio=self.train_ratio, val_ratio=self.val_ratio)
+            if split is None:
+                continue
             records.append(
                 DistillRecord(
                     sample_id=str(relative).replace("/", "_"),
@@ -165,6 +199,8 @@ def build_transforms(
     is_train: bool,
     augmentation,
 ) -> transforms.Compose:
+    """Builds weak augmentation transforms suitable for feature distillation."""
+
     interpolation = InterpolationMode.BICUBIC
     if is_train:
         return transforms.Compose(
@@ -193,6 +229,8 @@ def build_transforms(
 
 
 class DistillationImageDataset(Dataset):
+    """Map-style dataset that resolves image paths and applies shared transforms."""
+
     def __init__(
         self,
         records: Sequence[DistillRecord],
@@ -227,6 +265,8 @@ class DistillationImageDataset(Dataset):
 
 
 class WebDatasetSource(IterableDataset):
+    """Iterable WebDataset adapter for split-specific tar shard streams."""
+
     def __init__(
         self,
         *,
@@ -240,6 +280,11 @@ class WebDatasetSource(IterableDataset):
         self.split = split
         self.transform = transform
         self.limit = limit
+
+    def __len__(self) -> int:
+        if self.limit is None:
+            raise TypeError("WebDatasetSource length requires an explicit limit")
+        return self.limit
 
     def __iter__(self):
         try:
@@ -285,6 +330,8 @@ class WebDatasetSource(IterableDataset):
 
 
 class DistillationBatchCollator:
+    """Collates normalized image tensors and keeps record metadata alongside the batch."""
+
     def __call__(self, batch: Sequence[dict[str, Any]]) -> dict[str, Any]:
         pixel_values = [item["pixel_values"] for item in batch]
         records = [item["record"] for item in batch]
@@ -302,12 +349,15 @@ def _apply_limits(records: Iterable[DistillRecord], limit: int | None) -> list[D
 
 
 def build_record_source(config: DistillationExperimentConfig) -> RecordSource:
+    """Builds a record source for the configured dataset backend."""
+
     if config.data.source_type == "mirip_staged":
         return MiripStagedSource(config)
     if config.data.source_type == "imagefolder":
         return ImageFolderSource(
             config.paths.image_root,
             train_ratio=config.data.train_ratio,
+            val_ratio=config.data.val_ratio,
             split_salt=config.data.split_salt,
         )
     raise ValueError(f"Unsupported record source: {config.data.source_type}")
@@ -320,11 +370,15 @@ def build_stage_datasets(
     mean: Sequence[float],
     std: Sequence[float],
 ) -> tuple[Dataset, Dataset]:
+    """Builds train/val datasets for a specific training stage resolution."""
+
     if config.data.source_type == "webdataset":
         if not config.data.webdataset_url_pattern:
             raise ValueError("webdataset_url_pattern must be set for source_type=webdataset")
+        if config.data.train_limit is None or config.data.val_limit is None:
+            raise ValueError("train_limit and val_limit must be set for source_type=webdataset")
         train_dataset = WebDatasetSource(
-            url_pattern=config.data.webdataset_url_pattern,
+            url_pattern=_resolve_webdataset_url_pattern(config.data.webdataset_url_pattern, "train"),
             split="train",
             transform=build_transforms(
                 resolution=resolution,
@@ -336,7 +390,7 @@ def build_stage_datasets(
             limit=config.data.train_limit,
         )
         val_dataset = WebDatasetSource(
-            url_pattern=config.data.webdataset_url_pattern,
+            url_pattern=_resolve_webdataset_url_pattern(config.data.webdataset_url_pattern, "val"),
             split="val",
             transform=build_transforms(
                 resolution=resolution,
@@ -383,6 +437,8 @@ def build_stage_datasets(
 
 
 def collate_records(records: Sequence[DistillRecord]) -> dict[str, list[str]]:
+    """Converts record metadata into a logging-friendly columnar dict."""
+
     return {
         "sample_id": [record.sample_id for record in records],
         "image_path": [record.image_path for record in records],

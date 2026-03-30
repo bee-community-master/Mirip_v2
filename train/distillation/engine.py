@@ -44,6 +44,8 @@ from utils import (
 
 @dataclass
 class RunDirectories:
+    """Resolved output directories for one distillation run."""
+
     run_name: str
     checkpoint_dir: Path
     report_dir: Path
@@ -60,8 +62,14 @@ def _build_run_name(config: DistillationExperimentConfig) -> str:
     return f"{config.experiment.name}_{_timestamp_slug()}"
 
 
-def prepare_run_directories(config: DistillationExperimentConfig) -> RunDirectories:
-    run_name = _build_run_name(config)
+def prepare_run_directories(
+    config: DistillationExperimentConfig,
+    *,
+    run_name_override: str | None = None,
+) -> RunDirectories:
+    """Creates run-specific checkpoint/report directories and returns their paths."""
+
+    run_name = run_name_override or _build_run_name(config)
     checkpoint_dir = ensure_dir(resolve_train_path(Path(config.paths.checkpoint_root) / run_name))
     report_dir = ensure_dir(resolve_train_path(Path(config.paths.report_root) / run_name))
     export_dir = checkpoint_dir / config.paths.student_export_dirname
@@ -204,6 +212,8 @@ def train_one_epoch(
     log_every_steps: int,
     global_step: int,
 ) -> tuple[dict[str, float], int]:
+    """Runs one training epoch and returns aggregated metrics plus the updated global step."""
+
     model.train()
     optimizer.zero_grad(set_to_none=True)
     breakdowns: list[LossBreakdown] = []
@@ -279,6 +289,8 @@ def validate(
     device: torch.device,
     precision: str,
 ) -> dict[str, float]:
+    """Evaluates the current model on the validation split and aggregates metrics."""
+
     model.eval()
     breakdowns: list[LossBreakdown] = []
     patch_cosines: list[float] = []
@@ -425,6 +437,8 @@ def run_stage(
     tb_writer,
     resume_payload: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Executes one configured stage, including resume-aware optimizer restoration."""
+
     device = select_device(config.experiment.device)
     precision = resolve_precision(config.optimizer.precision, device)
     model.to(device)
@@ -584,19 +598,28 @@ def run_stage(
 
 
 def run_experiment(config: DistillationExperimentConfig) -> dict[str, Any]:
-    run_dirs = prepare_run_directories(config)
-    logger, tb_writer = _maybe_init_logging(config, run_dirs)
-    save_json(run_dirs.report_dir / "config_resolved.json", config.to_dict())
-    model = TeacherStudentDistillModel(config.models)
-    device = select_device(config.experiment.device)
-    model.to(device)
+    """Runs all enabled distillation stages and writes a final experiment summary."""
 
+    device = select_device(config.experiment.device)
     resume_payload = None
     start_stage_index = 0
+    run_name_override = None
     if config.experiment.resume_from:
         resume_payload = torch.load(resolve_train_path(config.experiment.resume_from), map_location=device)
-        model.load_checkpoint_state(resume_payload["model"])
+        run_name_override = str(resume_payload.get("run_name") or "")
         start_stage_index = int(resume_payload.get("stage_index", 0))
+
+    run_dirs = prepare_run_directories(config, run_name_override=run_name_override or None)
+    logger, tb_writer = _maybe_init_logging(config, run_dirs)
+    save_json(run_dirs.report_dir / "config_resolved.json", config.to_dict())
+    model = TeacherStudentDistillModel(
+        config.models,
+        normalize_features=config.distillation.normalize_features,
+    )
+    model.to(device)
+
+    if resume_payload is not None:
+        model.load_checkpoint_state(resume_payload["model"])
 
     stage_summaries: list[dict[str, Any]] = []
     active_stages = config.active_stages()

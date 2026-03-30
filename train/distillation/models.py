@@ -14,6 +14,8 @@ from config import ModelsConfig
 
 
 def resolve_backbone_dtype(backbone_dtype: str) -> torch.dtype | None:
+    """Resolves the requested backbone dtype with CUDA capability-aware fallback."""
+
     if backbone_dtype == "bf16":
         return torch.bfloat16
     if backbone_dtype == "fp16":
@@ -28,6 +30,8 @@ def resolve_backbone_dtype(backbone_dtype: str) -> torch.dtype | None:
 
 
 def map_teacher_layers(student_depth: int, teacher_depth: int) -> list[int]:
+    """Maps student layers to evenly spaced teacher layers for mid-level distillation."""
+
     if student_depth <= 0 or teacher_depth <= 0:
         return []
     positions = torch.linspace(0, teacher_depth - 1, steps=student_depth)
@@ -36,6 +40,8 @@ def map_teacher_layers(student_depth: int, teacher_depth: int) -> list[int]:
 
 @dataclass
 class BackboneOutputs:
+    """Canonicalized backbone feature outputs consumed by distillation losses."""
+
     patch_tokens: torch.Tensor
     cls_token: torch.Tensor
     pooled_output: torch.Tensor
@@ -46,6 +52,8 @@ class BackboneOutputs:
 
 @dataclass
 class DistillationBatch:
+    """Teacher/student feature bundle after projection, alignment, and optional normalization."""
+
     teacher: BackboneOutputs
     student: BackboneOutputs
     teacher_patch: torch.Tensor
@@ -59,6 +67,8 @@ class DistillationBatch:
 
 
 class FeatureProjector(nn.Module):
+    """Projects student features into the teacher hidden size before loss computation."""
+
     def __init__(self, in_dim: int, out_dim: int) -> None:
         super().__init__()
         self.norm = nn.LayerNorm(in_dim)
@@ -175,6 +185,8 @@ def align_patch_tokens(
 
 
 class BackboneAdapter(nn.Module):
+    """Backend-agnostic wrapper around a vision backbone used for distillation."""
+
     def __init__(self, *, model_name: str, backend: str, freeze: bool) -> None:
         super().__init__()
         self.model_name = model_name
@@ -207,6 +219,8 @@ class BackboneAdapter(nn.Module):
 
 
 class HuggingFaceBackboneAdapter(BackboneAdapter):
+    """Loads a Hugging Face vision backbone and exposes a uniform feature extraction API."""
+
     def __init__(
         self,
         *,
@@ -217,9 +231,9 @@ class HuggingFaceBackboneAdapter(BackboneAdapter):
         gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__(model_name=model_name, backend="huggingface", freeze=freeze)
-        processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
-        self.image_mean = list(getattr(processor, "image_mean", self.image_mean))
-        self.image_std = list(getattr(processor, "image_std", self.image_std))
+        self.processor = AutoImageProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+        self.image_mean = list(getattr(self.processor, "image_mean", self.image_mean))
+        self.image_std = list(getattr(self.processor, "image_std", self.image_std))
         model_kwargs: dict[str, Any] = {
             "low_cpu_mem_usage": True,
             "trust_remote_code": trust_remote_code,
@@ -244,8 +258,7 @@ class HuggingFaceBackboneAdapter(BackboneAdapter):
         target = Path(path)
         target.mkdir(parents=True, exist_ok=True)
         self.model.save_pretrained(target)
-        processor = AutoImageProcessor.from_pretrained(self.model_name)
-        processor.save_pretrained(target)
+        self.processor.save_pretrained(target)
 
     def extract_features(
         self,
@@ -318,6 +331,8 @@ class HuggingFaceBackboneAdapter(BackboneAdapter):
 
 
 class TimmBackboneAdapter(BackboneAdapter):
+    """Fallback adapter for timm vision backbones."""
+
     def __init__(
         self,
         *,
@@ -409,6 +424,8 @@ def build_backbone_adapter(
     trust_remote_code: bool,
     gradient_checkpointing: bool,
 ) -> BackboneAdapter:
+    """Builds the first working backbone adapter from the configured backend order."""
+
     last_error: Exception | None = None
     for backend in backend_order:
         try:
@@ -436,8 +453,11 @@ def build_backbone_adapter(
 
 
 class TeacherStudentDistillModel(nn.Module):
-    def __init__(self, config: ModelsConfig) -> None:
+    """Teacher-student wrapper that aligns features for dense representation distillation."""
+
+    def __init__(self, config: ModelsConfig, *, normalize_features: bool = True) -> None:
         super().__init__()
+        self.normalize_features = normalize_features
         self.teacher = build_backbone_adapter(
             model_name=config.teacher_name,
             freeze=True,
@@ -466,6 +486,11 @@ class TeacherStudentDistillModel(nn.Module):
         self.image_std = list(self.teacher.image_std or self.student.image_std)
         self.patch_size = self.student.patch_size or self.teacher.patch_size
 
+    def _maybe_normalize(self, features: torch.Tensor) -> torch.Tensor:
+        if not self.normalize_features:
+            return features
+        return F.normalize(features, dim=-1)
+
     def forward(self, pixel_values: torch.Tensor) -> DistillationBatch:
         with torch.no_grad():
             teacher_outputs = self.teacher.extract_features(
@@ -484,14 +509,14 @@ class TeacherStudentDistillModel(nn.Module):
             student_outputs.patch_grid_hw,
             teacher_outputs.patch_grid_hw,
         )
-        student_patch = F.normalize(self.patch_projector(aligned_student_patch), dim=-1)
-        teacher_patch = F.normalize(teacher_outputs.patch_tokens, dim=-1)
+        student_patch = self._maybe_normalize(self.patch_projector(aligned_student_patch))
+        teacher_patch = self._maybe_normalize(teacher_outputs.patch_tokens)
 
-        student_cls = F.normalize(self.cls_projector(student_outputs.cls_token), dim=-1)
-        teacher_cls = F.normalize(teacher_outputs.cls_token, dim=-1)
+        student_cls = self._maybe_normalize(self.cls_projector(student_outputs.cls_token))
+        teacher_cls = self._maybe_normalize(teacher_outputs.cls_token)
 
-        student_pool = F.normalize(self.pool_projector(student_outputs.pooled_output), dim=-1)
-        teacher_pool = F.normalize(teacher_outputs.pooled_output, dim=-1)
+        student_pool = self._maybe_normalize(self.pool_projector(student_outputs.pooled_output))
+        teacher_pool = self._maybe_normalize(teacher_outputs.pooled_output)
 
         aligned_student_mid: list[torch.Tensor] = []
         aligned_teacher_mid: list[torch.Tensor] = []
@@ -505,8 +530,8 @@ class TeacherStudentDistillModel(nn.Module):
                 student_outputs.patch_grid_hw,
                 teacher_outputs.patch_grid_hw,
             )
-            aligned_student_mid.append(F.normalize(projector(aligned_student), dim=-1))
-            aligned_teacher_mid.append(F.normalize(teacher_hidden, dim=-1))
+            aligned_student_mid.append(self._maybe_normalize(projector(aligned_student)))
+            aligned_teacher_mid.append(self._maybe_normalize(teacher_hidden))
 
         return DistillationBatch(
             teacher=teacher_outputs,
@@ -522,9 +547,13 @@ class TeacherStudentDistillModel(nn.Module):
         )
 
     def trainable_parameters(self) -> list[nn.Parameter]:
+        """Returns only parameters that should be optimized."""
+
         return [param for param in self.parameters() if param.requires_grad]
 
     def checkpoint_state(self) -> dict[str, Any]:
+        """Serializes the trainable student state and projector weights."""
+
         return {
             "student_adapter": self.student.trainable_state_dict(),
             "patch_projector": self.patch_projector.state_dict(),
@@ -536,6 +565,8 @@ class TeacherStudentDistillModel(nn.Module):
         }
 
     def load_checkpoint_state(self, payload: dict[str, Any]) -> None:
+        """Restores the serialized student backbone and projector weights."""
+
         self.student.load_trainable_state_dict(payload["student_adapter"])
         self.patch_projector.load_state_dict(payload["patch_projector"])
         self.cls_projector.load_state_dict(payload["cls_projector"])
@@ -543,4 +574,6 @@ class TeacherStudentDistillModel(nn.Module):
         self.mid_projectors.load_state_dict(payload["mid_projectors"])
 
     def export_student_backbone(self, path: str | Path) -> None:
+        """Exports the distilled student backbone in Hugging Face format when supported."""
+
         self.student.export_backbone(path)
