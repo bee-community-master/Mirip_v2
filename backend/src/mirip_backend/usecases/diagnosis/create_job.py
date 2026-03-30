@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 
 from mirip_backend.domain.auth.models import AuthenticatedUser
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
+from mirip_backend.domain.diagnosis.metadata import build_diagnosis_job_metadata
 from mirip_backend.domain.diagnosis.repositories import DiagnosisJobRepository
 from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.domain.uploads.repositories import UploadRepository
@@ -104,10 +105,9 @@ class CreateDiagnosisJobUseCase:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            metadata={
-                "requested_upload_count": str(len(command.upload_ids)),
-                "input_object_names": [upload.object_name for upload in uploads],
-            },
+            metadata=build_diagnosis_job_metadata(
+                upload_object_names=[upload.object_name for upload in uploads]
+            ),
         )
 
     async def _launch_worker_vm(self, job: DiagnosisJob) -> DiagnosisJob:

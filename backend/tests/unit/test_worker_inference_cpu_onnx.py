@@ -13,6 +13,7 @@ import torch
 from PIL import Image
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
+from mirip_backend.domain.diagnosis.metadata import INPUT_OBJECT_NAMES_METADATA_KEY
 from mirip_backend.infrastructure.config.settings import WorkerSettings
 from mirip_backend.shared.enums import JobStatus
 from mirip_backend.worker.inference.diagnosis_runtime import ImagePreprocessor
@@ -176,7 +177,7 @@ def _make_job(
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
         metadata={
-            "input_object_names": (
+            INPUT_OBJECT_NAMES_METADATA_KEY: (
                 input_object_names or ["users/user-1/diagnosis/upl-1/piece.png"]
             )
         },
