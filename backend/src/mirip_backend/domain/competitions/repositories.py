@@ -19,6 +19,13 @@ class CompetitionRepository(Protocol):
 class CompetitionSubmissionRepository(Protocol):
     async def create(self, submission: CompetitionSubmission) -> CompetitionSubmission: ...
 
+    async def exists_for_user(
+        self,
+        *,
+        competition_id: str,
+        user_id: str,
+    ) -> bool: ...
+
     async def list_by_user(
         self,
         user_id: str,

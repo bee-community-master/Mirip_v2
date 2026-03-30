@@ -63,13 +63,9 @@ class CreateCompetitionSubmissionUseCase:
         if upload.user_id != actor.user_id:
             raise AuthorizationError("Upload ownership mismatch")
 
-        existing_submissions = await self._submission_repository.list_by_user(
-            actor.user_id,
-            limit=500,
-            offset=0,
-        )
-        if any(
-            item.competition_id == command.competition_id for item in existing_submissions.items
+        if await self._submission_repository.exists_for_user(
+            competition_id=command.competition_id,
+            user_id=actor.user_id,
         ):
             raise ConflictError("Competition already has a submission from this user")
 

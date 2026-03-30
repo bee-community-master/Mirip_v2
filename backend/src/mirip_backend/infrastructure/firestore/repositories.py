@@ -254,6 +254,19 @@ class DocumentCompetitionSubmissionRepository:
         await self._store.put(self.COLLECTION, submission.id, _serialize(asdict(submission)))
         return submission
 
+    async def exists_for_user(
+        self,
+        *,
+        competition_id: str,
+        user_id: str,
+    ) -> bool:
+        docs = await self._store.query(
+            self.COLLECTION,
+            filters=(("competition_id", competition_id), ("user_id", user_id)),
+            limit=1,
+        )
+        return bool(docs)
+
     async def list_by_user(
         self, user_id: str, *, limit: int, offset: int
     ) -> Page[CompetitionSubmission]:
