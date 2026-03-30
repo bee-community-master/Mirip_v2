@@ -23,6 +23,8 @@ TRAIN_CONFIG_PATH = f"{TRAIN_ROOT}/configs/vast_rtx_pro_4500_blackwell_32gb_onde
 TRAIN_REPORTS_DIR = f"{TRAIN_ROOT}/reports"
 TRAIN_CHECKPOINTS_DIR = f"{TRAIN_ROOT}/checkpoints"
 TRAIN_ANCHORS_DIR = f"{TRAIN_ROOT}/anchors"
+TRAIN_NUM_WORKERS = 8
+TRAIN_PREFETCH_FACTOR = 4
 
 from vast_ai_control import (  # noqa: E402
     VastClient,
@@ -91,9 +93,9 @@ def _build_smoke_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 1 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report reports/dinov3_vitl16_smoke_train.json",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 1 --batch-size 8 --gradient-accumulation-steps 8 --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/dinov3_vitl16_smoke_train.json",
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output anchors/anchors.pt --report reports/dinov3_vitl16_smoke_anchors.json",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --output reports/dinov3_vitl16_smoke.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/dinov3_vitl16_smoke.json",
         ]
     )
 
@@ -106,9 +108,9 @@ def _build_full_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 50 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report reports/dinov3_vitl16_full_train.json",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 50 --batch-size 8 --gradient-accumulation-steps 8 --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/dinov3_vitl16_full_train.json",
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output anchors/anchors.pt --report reports/dinov3_vitl16_full_anchors.json",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --output reports/dinov3_vitl16_full.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/dinov3_vitl16_full.json",
         ]
     )
 

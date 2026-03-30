@@ -96,7 +96,10 @@ class DinoV3PairwiseModel(nn.Module):
         return self.score_features(projected)
 
     def forward(self, img1: torch.Tensor, img2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.predict_score(img1), self.predict_score(img2)
+        merged = torch.cat((img1, img2), dim=0)
+        merged_scores = self.predict_score(merged)
+        score1, score2 = torch.chunk(merged_scores, chunks=2, dim=0)
+        return score1, score2
 
     def compute_loss(
         self,

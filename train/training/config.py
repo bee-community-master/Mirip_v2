@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,11 @@ from typing import Any
 from .utils import resolve_project_path
 
 DEFAULT_DINOV3_MODEL_NAME = "camenduru/dinov3-vitl16-pretrain-lvd1689m"
+
+
+def default_num_workers() -> int:
+    cpu_count = os.cpu_count() or 4
+    return max(1, min(8, cpu_count - 2))
 
 
 @dataclass
@@ -23,8 +29,10 @@ class DinoV3TrainingConfig:
     scheduler_eta_min: float = 1e-6
     checkpoint_dir: str = field(default_factory=lambda: "checkpoints/dinov3_vitl16")
     save_every_n_epochs: int = 1
-    num_workers: int = 4
+    num_workers: int = field(default_factory=default_num_workers)
     pin_memory: bool = True
+    persistent_workers: bool = True
+    prefetch_factor: int = 4
     device: str = "cuda"
     precision: str = "auto"
     seed: int = 42
@@ -49,6 +57,10 @@ class DinoV3TrainingConfig:
             raise ValueError("gradient_accumulation_steps must be positive")
         if self.max_epochs <= 0:
             raise ValueError("max_epochs must be positive")
+        if self.num_workers < 0:
+            raise ValueError("num_workers must be non-negative")
+        if self.prefetch_factor <= 0:
+            raise ValueError("prefetch_factor must be positive")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
