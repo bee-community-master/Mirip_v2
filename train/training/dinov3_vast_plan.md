@@ -18,8 +18,9 @@
   - 산출물: `train/training/data/snapshot_manifest.csv`, `train/output_models/logs/snapshot_report.json`
 - `build_pairs.py`
   - snapshot manifest를 읽어 `metadata_{train,val,test}.csv`, `pairs_{train,val}.csv`, `pair_statistics.json`을 생성한다.
-  - split: image 기준 `80/10/10`, seed `42`
+  - split: image 기준 `75/15/10`, seed `42`
   - pair: same-dept 50%, cross-dept 50%
+  - 인접 tier(`S-A`, `A-B`, `B-C`) pair를 최소 70%까지 우선 채운다.
   - 최소 `tier_score` gap `5.0`
   - 이미지당 최대 등장 횟수 `30`
   - same-dept에서 `재현작` 우선
@@ -28,7 +29,7 @@
 ## Training Pipeline
 
 - 모델: `facebook/dinov3-vitl16-pretrain-lvd1689m`
-- 정책: frozen backbone + trainable projector/head
+- 정책: 마지막 2개 backbone layer는 trainable, 나머지는 freeze
 - 입력/출력: `(img1, img2) -> (score1, score2)`
 - loss: `MarginRankingLoss(margin=0.3)`
 - feature head:
@@ -37,11 +38,13 @@
 - 전처리: Hugging Face `AutoImageProcessor` 기본 설정 재사용
 - 기본 학습 설정:
   - optimizer: `AdamW`
-  - lr: `1e-4`
+  - head lr: `3e-5`
+  - backbone lr: `6e-6` (`scale=0.2`)
   - weight decay: `0.05`
   - scheduler: cosine decay
   - epochs: `50`
-  - early stopping patience: `10`
+  - early stopping patience: `3`
+  - early stopping metric: `anchor_tier_accuracy`
   - seed: `42`
   - precision: `bf16` 우선, 미지원 시 `fp16`
   - effective batch size 목표: `64`

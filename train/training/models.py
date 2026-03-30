@@ -27,12 +27,14 @@ class DinoV3FeatureExtractor(nn.Module):
         normalize: bool = True,
         freeze_backbone: bool = True,
         backbone_dtype: str = "auto",
+        unfreeze_last_n_layers: int = 0,
     ) -> None:
         super().__init__()
         self.model_name = model_name
         self.normalize = normalize
         self.freeze_backbone = freeze_backbone
         self.backbone_dtype = backbone_dtype
+        self.unfreeze_last_n_layers = unfreeze_last_n_layers
         resolved_dtype = resolve_backbone_dtype(backbone_dtype)
         model_kwargs: dict[str, object] = {
             "low_cpu_mem_usage": True,
@@ -44,7 +46,68 @@ class DinoV3FeatureExtractor(nn.Module):
         if freeze_backbone:
             for param in self.model.parameters():
                 param.requires_grad = False
+            if unfreeze_last_n_layers > 0:
+                self._unfreeze_last_layers(unfreeze_last_n_layers)
+                self.freeze_backbone = False
+            else:
+                self.model.eval()
+
+    def _resolve_backbone_layers(self) -> list[nn.Module]:
+        layer_candidates = (
+            getattr(self.model, "layer", None),
+            getattr(getattr(self.model, "encoder", None), "layer", None),
+            getattr(getattr(getattr(self.model, "vision_model", None), "encoder", None), "layer", None),
+        )
+        for candidate in layer_candidates:
+            if candidate is None:
+                continue
+            try:
+                return list(candidate)
+            except TypeError:
+                continue
+        raise RuntimeError(
+            "AutoModel backbone does not expose a supported transformer layer stack for selective unfreezing."
+        )
+
+    def _resolve_final_norms(self) -> list[nn.Module]:
+        norm_candidates = (
+            getattr(self.model, "norm", None),
+            getattr(self.model, "layernorm", None),
+            getattr(self.model, "post_layernorm", None),
+            getattr(getattr(self.model, "encoder", None), "layernorm", None),
+            getattr(getattr(self.model, "vision_model", None), "layernorm", None),
+        )
+        return [module for module in norm_candidates if module is not None]
+
+    def _unfreeze_final_norms(self) -> None:
+        norm_candidates = self._resolve_final_norms()
+        for module in norm_candidates:
+            for param in module.parameters():
+                param.requires_grad = True
+
+    def _unfreeze_last_layers(self, layer_count: int) -> None:
+        backbone_layers = self._resolve_backbone_layers()
+        total_layers = len(backbone_layers)
+        if total_layers == 0:
+            raise RuntimeError("AutoModel backbone contains no layers to unfreeze.")
+        start_index = max(total_layers - layer_count, 0)
+        for index in range(start_index, total_layers):
+            for param in backbone_layers[index].parameters():
+                param.requires_grad = True
+        self._unfreeze_final_norms()
+
+    def train(self, mode: bool = True) -> DinoV3FeatureExtractor:
+        super().train(mode)
+        if self.freeze_backbone:
             self.model.eval()
+            return self
+        if self.unfreeze_last_n_layers > 0:
+            self.model.eval()
+            for layer in self._resolve_backbone_layers()[-self.unfreeze_last_n_layers :]:
+                layer.train(mode)
+            for norm in self._resolve_final_norms():
+                norm.train(mode)
+        return self
 
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         if self.freeze_backbone:
@@ -73,6 +136,7 @@ class DinoV3PairwiseModel(nn.Module):
         margin: float = 0.3,
         freeze_backbone: bool = True,
         backbone_dtype: str = "auto",
+        unfreeze_last_n_layers: int = 0,
     ) -> None:
         super().__init__()
         self.model_name = model_name
@@ -82,6 +146,7 @@ class DinoV3PairwiseModel(nn.Module):
             normalize=True,
             freeze_backbone=freeze_backbone,
             backbone_dtype=backbone_dtype,
+            unfreeze_last_n_layers=unfreeze_last_n_layers,
         )
         feature_dim = self.feature_extractor.output_dim
         self.projector = nn.Sequential(

@@ -17,12 +17,13 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate train/val/test metadata and pair CSVs.")
     parser.add_argument("--manifest", default="training/data/snapshot_manifest.csv")
     parser.add_argument("--output-dir", default="training/data")
-    parser.add_argument("--train-ratio", type=float, default=0.8)
-    parser.add_argument("--val-ratio", type=float, default=0.1)
+    parser.add_argument("--train-ratio", type=float, default=0.75)
+    parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--total-pairs", type=int, default=50_000)
     parser.add_argument("--same-dept-ratio", type=float, default=0.5)
     parser.add_argument("--min-score-gap", type=float, default=5.0)
     parser.add_argument("--max-appearances", type=int, default=30)
+    parser.add_argument("--adjacent-tier-ratio", type=float, default=0.7)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -46,6 +47,7 @@ def main() -> int:
             same_dept_ratio=args.same_dept_ratio,
             min_score_gap=args.min_score_gap,
             max_appearances=args.max_appearances,
+            adjacent_tier_ratio=args.adjacent_tier_ratio,
             seed=args.seed,
             strict=True,
         )

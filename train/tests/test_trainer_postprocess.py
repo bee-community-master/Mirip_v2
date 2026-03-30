@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,15 @@ if TORCH_AVAILABLE:
 
 @unittest.skipUnless(TORCH_AVAILABLE, "torch is required for trainer callback test")
 class TrainerPostprocessTests(unittest.TestCase):
+    @staticmethod
+    def _single_batch() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        return (
+            torch.tensor([[1.0], [2.0]], dtype=torch.float32),
+            torch.tensor([[0.5], [1.5]], dtype=torch.float32),
+            torch.tensor([1.0, -1.0], dtype=torch.float32),
+            torch.tensor([1, 0], dtype=torch.int64),
+        )
+
     def test_post_epoch_callback_receives_each_saved_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = DinoV3TrainingConfig(
@@ -49,12 +59,7 @@ class TrainerPostprocessTests(unittest.TestCase):
                 precision="fp32",
             )
             trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
-            batch = (
-                torch.tensor([[1.0], [2.0]], dtype=torch.float32),
-                torch.tensor([[0.5], [1.5]], dtype=torch.float32),
-                torch.tensor([1.0, -1.0], dtype=torch.float32),
-                torch.tensor([1, 0], dtype=torch.int64),
-            )
+            batch = self._single_batch()
             train_loader = [batch]
             val_loader = [batch]
             callback_paths: list[str] = []
@@ -83,12 +88,7 @@ class TrainerPostprocessTests(unittest.TestCase):
                 precision="fp32",
             )
             trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
-            batch = (
-                torch.tensor([[1.0], [2.0]], dtype=torch.float32),
-                torch.tensor([[0.5], [1.5]], dtype=torch.float32),
-                torch.tensor([1.0, -1.0], dtype=torch.float32),
-                torch.tensor([1, 0], dtype=torch.int64),
-            )
+            batch = self._single_batch()
             trainer.train([batch], [batch])
 
             resumed = DinoV3Trainer(
@@ -109,6 +109,83 @@ class TrainerPostprocessTests(unittest.TestCase):
             )
 
             self.assertEqual(resumed.current_epoch, 1)
+
+    def test_anchor_metric_updates_history_and_resume_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=2,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+                early_stopping_metric="anchor_tier_accuracy",
+                early_stopping_patience=3,
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            callback_metrics = iter([0.61, 0.57])
+
+            def callback(_path: Path, _metrics: dict[str, float]) -> dict[str, object]:
+                return {
+                    "report": {
+                        "metrics": {
+                            "anchor_tier_accuracy": next(callback_metrics),
+                        }
+                    }
+                }
+
+            batch = self._single_batch()
+            summary = trainer.train([batch], [batch], post_epoch_callback=callback)
+
+            self.assertEqual(summary["history"]["anchor_tier_accuracy"], [0.61, 0.57])
+            self.assertEqual(trainer.best_selection_metric, 0.61)
+
+            resumed = DinoV3Trainer(
+                model=DummyPairwiseModel(),
+                config=DinoV3TrainingConfig(
+                    checkpoint_dir=temp_dir,
+                    max_epochs=5,
+                    batch_size=2,
+                    gradient_accumulation_steps=1,
+                    num_workers=0,
+                    persistent_workers=False,
+                    pin_memory=False,
+                    device="cpu",
+                    precision="fp32",
+                    early_stopping_metric="anchor_tier_accuracy",
+                ),
+                resume_from=str(Path(temp_dir) / "checkpoint_epoch_0002.pt"),
+                resume_next_epoch=True,
+            )
+
+            self.assertEqual(resumed.current_epoch, 2)
+            self.assertEqual(resumed.best_selection_metric, 0.61)
+            self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy")
+
+    def test_val_loss_metric_saves_best_model_on_first_epoch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=1,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+                early_stopping_metric="val_loss",
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            batch = self._single_batch()
+
+            trainer.train([batch], [batch])
+
+            self.assertTrue((Path(temp_dir) / "best_model.pt").exists())
+            self.assertTrue(math.isfinite(trainer.best_val_loss))
 
 
 if __name__ == "__main__":

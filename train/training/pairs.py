@@ -6,6 +6,13 @@ from typing import Any
 
 from .utils import load_rows_from_csv, write_json, write_rows_to_csv
 
+TIER_ORDER = {
+    "S": 0,
+    "A": 1,
+    "B": 2,
+    "C": 3,
+}
+
 
 class PairGenerationError(RuntimeError):
     def __init__(self, message: str, stats: dict[str, Any]) -> None:
@@ -52,6 +59,14 @@ def _compute_quality_tier(high: dict[str, Any], low: dict[str, Any]) -> int:
     return 1
 
 
+def _tier_distance(first: dict[str, Any], second: dict[str, Any]) -> int:
+    first_rank = TIER_ORDER.get(first["tier"])
+    second_rank = TIER_ORDER.get(second["tier"])
+    if first_rank is None or second_rank is None:
+        return 99
+    return abs(first_rank - second_rank)
+
+
 def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: float) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in items:
@@ -77,10 +92,13 @@ def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: f
                     {
                         "image_path_1": high["image_path"],
                         "image_path_2": low["image_path"],
+                        "tier_1": high["tier"],
+                        "tier_2": low["tier"],
                         "label": 1,
                         "tier_score_1": high["tier_score"],
                         "tier_score_2": low["tier_score"],
                         "score_gap": round(gap, 4),
+                        "tier_distance": _tier_distance(high, low),
                         "pair_type": "same_dept",
                         "dept": dept,
                         "quality_tier": quality,
@@ -92,10 +110,13 @@ def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: f
                     {
                         "image_path_1": low["image_path"],
                         "image_path_2": high["image_path"],
+                        "tier_1": low["tier"],
+                        "tier_2": high["tier"],
                         "label": -1,
                         "tier_score_1": low["tier_score"],
                         "tier_score_2": high["tier_score"],
                         "score_gap": round(gap, 4),
+                        "tier_distance": _tier_distance(high, low),
                         "pair_type": "same_dept",
                         "dept": dept,
                         "quality_tier": quality,
@@ -135,10 +156,13 @@ def _generate_cross_dept_candidates(
             {
                 "image_path_1": high["image_path"],
                 "image_path_2": low["image_path"],
+                "tier_1": high["tier"],
+                "tier_2": low["tier"],
                 "label": 1,
                 "tier_score_1": high["tier_score"],
                 "tier_score_2": low["tier_score"],
                 "score_gap": round(gap, 4),
+                "tier_distance": _tier_distance(high, low),
                 "pair_type": "cross_dept",
                 "dept": f"{high['normalized_dept']}_vs_{low['normalized_dept']}",
                 "quality_tier": 0,
@@ -170,6 +194,65 @@ def _select_with_appearance_limit(
     return selected
 
 
+def _sort_same_dept_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        candidates,
+        key=lambda pair: (
+            pair["tier_distance"] != 1,
+            -pair["quality_tier"],
+            pair["tier_distance"],
+            pair["score_gap"],
+        ),
+    )
+
+
+def _sort_cross_dept_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        candidates,
+        key=lambda pair: (
+            pair["tier_distance"] != 1,
+            pair["tier_distance"],
+            pair["score_gap"],
+        ),
+    )
+
+
+def _select_boundary_mix(
+    candidates: list[dict[str, Any]],
+    target: int,
+    max_appearances: int,
+    adjacent_tier_ratio: float,
+) -> list[dict[str, Any]]:
+    adjacent_candidates = [pair for pair in candidates if pair["tier_distance"] == 1]
+    non_adjacent_candidates = [pair for pair in candidates if pair["tier_distance"] != 1]
+    adjacent_target = min(int(target * adjacent_tier_ratio), len(adjacent_candidates))
+
+    selected_adjacent = _select_with_appearance_limit(
+        candidates=adjacent_candidates,
+        target=adjacent_target,
+        max_appearances=max_appearances,
+    )
+    selected = list(selected_adjacent)
+    selected_keys = {
+        (pair["post_no_1"], pair["post_no_2"], pair["label"])
+        for pair in selected_adjacent
+    }
+    remaining_candidates = [
+        pair
+        for pair in (adjacent_candidates + non_adjacent_candidates)
+        if (pair["post_no_1"], pair["post_no_2"], pair["label"]) not in selected_keys
+    ]
+    if len(selected) < target:
+        selected.extend(
+            _select_with_appearance_limit(
+                candidates=remaining_candidates,
+                target=target - len(selected),
+                max_appearances=max_appearances,
+            )
+        )
+    return selected[:target]
+
+
 def _build_shortfall_reasons(
     pair_label: str,
     target: int,
@@ -193,17 +276,19 @@ def generate_pairs(
     min_score_gap: float = 5.0,
     max_appearances: int = 30,
     seed: int = 42,
+    adjacent_tier_ratio: float = 0.7,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rng = random.Random(seed)
     same_target = int(total_pairs * same_dept_ratio)
     cross_target = total_pairs - same_target
 
     same_candidates = _generate_same_dept_candidates(items, min_score_gap=min_score_gap)
-    same_candidates.sort(key=lambda pair: (-pair["quality_tier"], -pair["score_gap"]))
-    same_selected = _select_with_appearance_limit(
+    same_candidates = _sort_same_dept_candidates(same_candidates)
+    same_selected = _select_boundary_mix(
         candidates=same_candidates,
         target=same_target,
         max_appearances=max_appearances,
+        adjacent_tier_ratio=adjacent_tier_ratio,
     )
 
     cross_candidates = _generate_cross_dept_candidates(
@@ -212,10 +297,12 @@ def generate_pairs(
         seed=seed,
         max_candidates=max(total_pairs * 20, 100_000),
     )
-    cross_selected = _select_with_appearance_limit(
+    cross_candidates = _sort_cross_dept_candidates(cross_candidates)
+    cross_selected = _select_boundary_mix(
         candidates=cross_candidates,
         target=cross_target,
         max_appearances=max_appearances,
+        adjacent_tier_ratio=adjacent_tier_ratio,
     )
 
     pairs = same_selected + cross_selected
@@ -228,6 +315,8 @@ def generate_pairs(
         "available_cross_dept_candidates": len(cross_candidates),
         "selected_same_dept_pairs": len(same_selected),
         "selected_cross_dept_pairs": len(cross_selected),
+        "selected_adjacent_tier_pairs": sum(1 for pair in pairs if pair["tier_distance"] == 1),
+        "adjacent_tier_ratio_target": adjacent_tier_ratio,
         "produced_pairs": len(pairs),
         "shortfall_reasons": _build_shortfall_reasons(
             pair_label="same_dept",
@@ -248,14 +337,15 @@ def generate_pairs(
 def build_pair_outputs(
     manifest_csv: str,
     output_dir: str,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
+    train_ratio: float = 0.75,
+    val_ratio: float = 0.15,
     total_pairs: int = 50_000,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
     max_appearances: int = 30,
     seed: int = 42,
     strict: bool = True,
+    adjacent_tier_ratio: float = 0.7,
 ) -> dict[str, Any]:
     rows = [_row_to_item(row) for row in load_rows_from_csv(manifest_csv)]
     train_items, val_items, test_items = split_items_by_image(
@@ -265,7 +355,7 @@ def build_pair_outputs(
         seed=seed,
     )
     train_target = int(total_pairs * train_ratio)
-    val_target = max(int(total_pairs * val_ratio), 1_000)
+    val_target = max(int(total_pairs * val_ratio), 7_500)
 
     train_pairs, train_pair_diagnostics = generate_pairs(
         items=train_items,
@@ -274,6 +364,7 @@ def build_pair_outputs(
         min_score_gap=min_score_gap,
         max_appearances=max_appearances,
         seed=seed,
+        adjacent_tier_ratio=adjacent_tier_ratio,
     )
     val_pairs, val_pair_diagnostics = generate_pairs(
         items=val_items,
@@ -282,6 +373,7 @@ def build_pair_outputs(
         min_score_gap=min_score_gap,
         max_appearances=max_appearances,
         seed=seed + 1,
+        adjacent_tier_ratio=adjacent_tier_ratio,
     )
 
     metadata_fields = [
@@ -302,6 +394,9 @@ def build_pair_outputs(
         "tier_score_1",
         "tier_score_2",
         "score_gap",
+        "tier_1",
+        "tier_2",
+        "tier_distance",
         "pair_type",
         "dept",
         "quality_tier",
@@ -344,6 +439,7 @@ def build_pair_outputs(
         "seed": seed,
         "min_score_gap": min_score_gap,
         "max_appearances": max_appearances,
+        "adjacent_tier_ratio": adjacent_tier_ratio,
     }
     stats["pair_shortfall"] = {
         "train": {

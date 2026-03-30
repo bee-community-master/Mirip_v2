@@ -42,8 +42,8 @@ class DinoV3Trainer:
         self.precision = resolve_precision(config.precision, "cuda" if self.device.type == "cuda" else "cpu")
         self.model.to(self.device)
 
-        trainable_params = [param for param in self.model.parameters() if param.requires_grad]
-        self.optimizer = AdamW(trainable_params, lr=config.learning_rate, weight_decay=config.weight_decay)
+        optimizer_groups = self._build_optimizer_groups()
+        self.optimizer = AdamW(optimizer_groups, weight_decay=config.weight_decay)
         self.scheduler = CosineAnnealingLR(
             self.optimizer,
             T_max=config.max_epochs,
@@ -51,6 +51,8 @@ class DinoV3Trainer:
         )
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16" and self.device.type == "cuda")
         self.best_val_loss = math.inf
+        self.best_selection_metric: float | None = None
+        self.best_selection_metric_name: str | None = None
         self.current_epoch = 0
         self.global_step = 0
         self.patience_counter = 0
@@ -67,6 +69,31 @@ class DinoV3Trainer:
             self.load_checkpoint(resume_from)
             if resume_next_epoch:
                 self.current_epoch += 1
+
+    def _build_optimizer_groups(self) -> list[dict[str, Any]]:
+        backbone_params = []
+        head_params = []
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.startswith("feature_extractor.model."):
+                backbone_params.append(param)
+            else:
+                head_params.append(param)
+
+        optimizer_groups: list[dict[str, Any]] = []
+        if head_params:
+            optimizer_groups.append({"params": head_params, "lr": self.config.learning_rate})
+        if backbone_params:
+            optimizer_groups.append(
+                {
+                    "params": backbone_params,
+                    "lr": self.config.learning_rate * self.config.backbone_learning_rate_scale,
+                }
+            )
+        if not optimizer_groups:
+            raise RuntimeError("No trainable parameters were found for optimization.")
+        return optimizer_groups
 
     def _autocast(self):
         if self.device.type != "cuda" or self.precision == "fp32":
@@ -177,6 +204,8 @@ class DinoV3Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "best_val_loss": self.best_val_loss,
+            "best_selection_metric": self.best_selection_metric,
+            "best_selection_metric_name": self.best_selection_metric_name,
             "patience_counter": self.patience_counter,
             "config": self.config.to_dict(),
             "peak_vram_gb": self.peak_vram_gb,
@@ -194,20 +223,45 @@ class DinoV3Trainer:
         self.current_epoch = int(checkpoint.get("epoch", 0))
         self.global_step = int(checkpoint.get("global_step", 0))
         self.best_val_loss = float(checkpoint.get("best_val_loss", math.inf))
+        best_selection_metric = checkpoint.get("best_selection_metric")
+        self.best_selection_metric = float(best_selection_metric) if best_selection_metric is not None else None
+        best_selection_metric_name = checkpoint.get("best_selection_metric_name")
+        self.best_selection_metric_name = str(best_selection_metric_name) if best_selection_metric_name else None
         self.patience_counter = int(checkpoint.get("patience_counter", 0))
         self.peak_vram_gb = float(checkpoint.get("peak_vram_gb", 0.0))
+
+    def _resolve_selection_metric(
+        self,
+        validation_metrics: dict[str, float],
+        postprocess_result: dict[str, Any] | None,
+    ) -> tuple[str, float]:
+        if self.config.early_stopping_metric == "anchor_tier_accuracy" and postprocess_result:
+            report = postprocess_result.get("report")
+            report_metrics = report.get("metrics") if isinstance(report, dict) else None
+            metric_value = report_metrics.get("anchor_tier_accuracy") if isinstance(report_metrics, dict) else None
+            if metric_value is not None:
+                return "anchor_tier_accuracy", float(metric_value)
+        return "val_loss", float(validation_metrics["val_loss"])
+
+    def _is_metric_improved(self, metric_name: str, candidate_value: float) -> bool:
+        if metric_name == "val_loss":
+            return candidate_value < self.best_val_loss - self.config.early_stopping_min_delta
+        if self.best_selection_metric is None:
+            return True
+        return candidate_value > self.best_selection_metric + self.config.early_stopping_min_delta
 
     def train(
         self,
         train_loader: DataLoader,
         val_loader: DataLoader,
-        post_epoch_callback: Callable[[Path, dict[str, float]], None] | None = None,
+        post_epoch_callback: Callable[[Path, dict[str, float]], dict[str, Any] | None] | None = None,
     ) -> dict[str, Any]:
         history: dict[str, list[float]] = {
             "train_loss": [],
             "val_loss": [],
             "val_accuracy": [],
             "same_dept_accuracy": [],
+            "anchor_tier_accuracy": [],
         }
         latest_completed_checkpoint: Path | None = None
         latest_completed_metrics: dict[str, float] | None = None
@@ -250,20 +304,44 @@ class DinoV3Trainer:
                 extra={"epoch_metrics": checkpoint_metrics},
             )
             latest_completed_metrics = checkpoint_metrics
+            postprocess_result: dict[str, Any] | None = None
             if post_epoch_callback is not None:
-                post_epoch_callback(latest_completed_checkpoint, checkpoint_metrics)
-            if metrics["val_loss"] < self.best_val_loss - self.config.early_stopping_min_delta:
-                self.best_val_loss = metrics["val_loss"]
+                postprocess_result = post_epoch_callback(latest_completed_checkpoint, checkpoint_metrics)
+            metric_name, selection_metric_value = self._resolve_selection_metric(metrics, postprocess_result)
+            if metric_name == "anchor_tier_accuracy":
+                history["anchor_tier_accuracy"].append(selection_metric_value)
+
+            current_best_val_loss = min(self.best_val_loss, metrics["val_loss"])
+            if self._is_metric_improved(metric_name, selection_metric_value):
+                if metric_name == "val_loss":
+                    self.best_val_loss = selection_metric_value
+                    self.best_selection_metric_name = "val_loss"
+                else:
+                    self.best_selection_metric = selection_metric_value
+                    self.best_selection_metric_name = metric_name
+                    self.best_val_loss = current_best_val_loss
                 self.patience_counter = 0
                 self.save_checkpoint(
                     "best_model.pt",
                     extra={
-                        "best_metrics": metrics,
+                        "best_metrics": {
+                            **metrics,
+                            metric_name: selection_metric_value,
+                        },
+                        "best_selection_metric": selection_metric_value,
+                        "best_selection_metric_name": metric_name,
                         "source_checkpoint": latest_completed_checkpoint.name if latest_completed_checkpoint else None,
                     },
                 )
             else:
                 self.patience_counter += 1
+                self.best_val_loss = current_best_val_loss
+
+            if latest_completed_checkpoint is not None:
+                self.save_checkpoint(
+                    latest_completed_checkpoint.name,
+                    extra={"epoch_metrics": checkpoint_metrics},
+                )
 
             if self.patience_counter >= self.config.early_stopping_patience:
                 break

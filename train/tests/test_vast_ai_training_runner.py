@@ -216,6 +216,10 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
     def test_full_stage_command_runs_postprocess_selection_before_final_eval(self) -> None:
         command = vast_ai_training_runner.build_stage_command("full", "/workspace/mirip_v2")
 
+        self.assertIn("--learning-rate 3e-5", command)
+        self.assertIn("--backbone-learning-rate-scale 0.2", command)
+        self.assertIn("--unfreeze-last-n-layers 2", command)
+        self.assertIn("--early-stopping-metric anchor_tier_accuracy", command)
         self.assertIn("--postprocess-registry output_models/logs/dinov3_vit7b16_postprocess_registry.json", command)
         self.assertIn("--postprocess-report output_models/logs/dinov3_vit7b16_full_candidate.json", command)
         self.assertIn("--postprocess-best-checkpoint output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt", command)

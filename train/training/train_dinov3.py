@@ -40,14 +40,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
+    parser.add_argument("--learning-rate", type=float, default=3e-5)
     parser.add_argument("--weight-decay", type=float, default=0.05)
+    parser.add_argument("--backbone-learning-rate-scale", type=float, default=0.2)
     parser.add_argument("--dropout", type=float, default=0.3)
     parser.add_argument("--margin", type=float, default=0.3)
+    parser.add_argument("--unfreeze-last-n-layers", type=int, default=2)
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
     parser.add_argument("--no-persistent-workers", action="store_true")
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=3)
+    parser.add_argument("--early-stopping-metric", default="anchor_tier_accuracy", choices=["val_loss", "anchor_tier_accuracy"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--precision", default="auto", choices=["auto", "bf16", "fp16", "fp32"])
     parser.add_argument("--seed", type=int, default=42)
@@ -115,11 +118,13 @@ def main() -> int:
         model_name=args.model_name,
         backbone_dtype=args.backbone_dtype,
         learning_rate=args.learning_rate,
+        backbone_learning_rate_scale=args.backbone_learning_rate_scale,
         weight_decay=args.weight_decay,
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         max_epochs=args.epochs,
         early_stopping_patience=args.patience,
+        early_stopping_metric=args.early_stopping_metric,
         checkpoint_dir=args.output_dir,
         num_workers=args.num_workers,
         persistent_workers=not args.no_persistent_workers,
@@ -127,6 +132,7 @@ def main() -> int:
         device=args.device,
         precision=args.precision,
         seed=args.seed,
+        unfreeze_last_n_layers=args.unfreeze_last_n_layers,
         dropout=args.dropout,
         margin=args.margin,
         wandb_enabled=args.wandb,
@@ -169,6 +175,7 @@ def main() -> int:
         model_name=config.model_name,
         projector_hidden_dim=config.projector_hidden_dim,
         projector_output_dim=config.projector_output_dim,
+        unfreeze_last_n_layers=args.unfreeze_last_n_layers,
         dropout=config.dropout,
         margin=config.margin,
         freeze_backbone=True,
@@ -182,12 +189,12 @@ def main() -> int:
     )
     postprocess_kwargs = resolve_postprocess_kwargs(args, config)
 
-    def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> None:
+    def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> dict[str, Any] | None:
         if postprocess_kwargs is None:
             return
         if trainer.device.type == "cuda":
             torch.cuda.empty_cache()
-        run_postprocess_for_checkpoint(
+        result = run_postprocess_for_checkpoint(
             checkpoint_path=checkpoint_path,
             model=trainer.model,
             config_dict=config.to_dict(),
@@ -195,6 +202,7 @@ def main() -> int:
         )
         if trainer.device.type == "cuda":
             torch.cuda.empty_cache()
+        return result
 
     summary = trainer.train(
         train_loader,
