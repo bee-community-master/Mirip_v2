@@ -1,0 +1,14 @@
+# Torch comes from the base Vast.ai PyTorch image.
+transformers>=4.56.0,<5.0.0
+accelerate>=1.10.0
+numpy>=1.26.0
+Pillow>=10.0.0
+tqdm>=4.66.0
+wandb>=0.19.0
+safetensors>=0.4.0
+PyYAML>=6.0.0
+torchvision>=0.22.0
+timm>=1.0.0
+matplotlib>=3.9.0
+tensorboard>=2.18.0
+webdataset>=0.2.100
