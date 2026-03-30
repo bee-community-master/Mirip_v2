@@ -91,7 +91,12 @@ class ImagePreprocessor:
     do_normalize: bool
 
     @classmethod
-    def load(cls, path: str | Path, *, fallback_image_size: int = DEFAULT_IMAGE_SIZE) -> "ImagePreprocessor":
+    def load(
+        cls,
+        path: str | Path,
+        *,
+        fallback_image_size: int = DEFAULT_IMAGE_SIZE,
+    ) -> ImagePreprocessor:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
         image_mean = tuple(float(value) for value in config.get("image_mean", DEFAULT_IMAGE_MEAN))
         image_std = tuple(float(value) for value in config.get("image_std", DEFAULT_IMAGE_STD))
@@ -162,7 +167,7 @@ class DiagnosisHeadArtifact:
     score_head_state_dict: dict[str, Any]
 
     @classmethod
-    def load(cls, path: str | Path) -> "DiagnosisHeadArtifact":
+    def load(cls, path: str | Path) -> DiagnosisHeadArtifact:
         payload = torch.load(Path(path), map_location="cpu")
         return cls(
             schema_version=str(payload["schema_version"]),
@@ -227,7 +232,7 @@ class DiagnosisBundleRuntime:
     anchors: dict[str, torch.Tensor]
 
     @classmethod
-    def load(cls, bundle: MaterializedModelBundle) -> "DiagnosisBundleRuntime":
+    def load(cls, bundle: MaterializedModelBundle) -> DiagnosisBundleRuntime:
         manifest = bundle.manifest
         preprocessor = ImagePreprocessor.load(
             manifest.preprocessor_path(bundle.local_dir),
@@ -237,9 +242,14 @@ class DiagnosisBundleRuntime:
             manifest.extra_path(bundle.local_dir, "diagnosis_head")
         )
         if manifest.model_name and diagnosis_head.model_name != manifest.model_name:
-            raise RuntimeError("Diagnosis head model_name does not match the serving bundle manifest")
+            raise RuntimeError(
+                "Diagnosis head model_name does not match the serving bundle manifest"
+            )
         scoring_head = DiagnosisScoringHead(diagnosis_head)
-        anchors_payload = torch.load(manifest.extra_path(bundle.local_dir, "anchors"), map_location="cpu")
+        anchors_payload = torch.load(
+            manifest.extra_path(bundle.local_dir, "anchors"),
+            map_location="cpu",
+        )
         anchors: dict[str, torch.Tensor] = {}
         for tier, features in dict(anchors_payload.get("features", {})).items():
             if not torch.is_tensor(features):
@@ -263,7 +273,8 @@ class DiagnosisBundleRuntime:
         feature_tensor = torch.from_numpy(encoder_features).float()
         if feature_tensor.ndim != 2 or feature_tensor.shape[1] != self.scoring_head.feature_dim:
             raise RuntimeError(
-                f"Encoder output shape must be [N, {self.scoring_head.feature_dim}], got {tuple(feature_tensor.shape)}"
+                "Encoder output shape must be "
+                f"[N, {self.scoring_head.feature_dim}], got {tuple(feature_tensor.shape)}"
             )
         projected = self.scoring_head.project_features(feature_tensor)
         raw_score = float(self.scoring_head.score_projected(projected).squeeze().item())
@@ -284,7 +295,10 @@ class DiagnosisBundleRuntime:
             raise RuntimeError("ONNX encoder returned no outputs")
         return np.asarray(outputs[0], dtype=np.float32)
 
-    def _rank_projected_feature(self, projected_feature: torch.Tensor) -> tuple[str, float, dict[str, float]]:
+    def _rank_projected_feature(
+        self,
+        projected_feature: torch.Tensor,
+    ) -> tuple[str, float, dict[str, float]]:
         input_score = float(self.scoring_head.score_projected(projected_feature).squeeze().item())
         win_rates: dict[str, float] = {}
 
