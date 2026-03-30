@@ -9,7 +9,7 @@ from mirip_backend.domain.common.models import Page
 from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.enums import UploadStatus
-from mirip_backend.usecases.uploads.create_upload_session import sanitize_category
+from mirip_backend.shared.upload_paths import sanitize_category
 
 
 @dataclass(slots=True, frozen=True)

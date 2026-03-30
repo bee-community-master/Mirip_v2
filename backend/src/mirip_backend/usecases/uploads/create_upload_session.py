@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from pathlib import PurePosixPath
 
 from mirip_backend.domain.auth.models import AuthenticatedUser
 from mirip_backend.domain.common.models import SignedUploadSession
@@ -13,29 +11,8 @@ from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import UploadStatus
-from mirip_backend.shared.exceptions import ValidationError
 from mirip_backend.shared.ids import new_id
-
-_SAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
-
-
-def _sanitize_filename(filename: str) -> str:
-    name = PurePosixPath(filename).name.strip()
-    safe_name = _SAFE_PATH_CHARS.sub("-", name).strip(".-")
-    if not safe_name:
-        raise ValidationError("Filename must contain at least one safe character")
-    return safe_name
-
-
-def _sanitize_category(category: str) -> str:
-    safe_category = _SAFE_PATH_CHARS.sub("-", category.strip().lower()).strip(".-")
-    if not safe_category:
-        raise ValidationError("Category must contain at least one safe character")
-    return safe_category
-
-
-def sanitize_category(category: str) -> str:
-    return _sanitize_category(category)
+from mirip_backend.shared.upload_paths import sanitize_category, sanitize_filename
 
 
 @dataclass(slots=True, frozen=True)
@@ -70,8 +47,8 @@ class CreateUploadSessionUseCase:
         command: CreateUploadSessionCommand,
     ) -> CreateUploadSessionResult:
         upload_id = new_id("upl")
-        safe_filename = _sanitize_filename(command.filename)
-        safe_category = _sanitize_category(command.category)
+        safe_filename = sanitize_filename(command.filename)
+        safe_category = sanitize_category(command.category)
         object_name = f"users/{actor.user_id}/{safe_category}/{upload_id}/{safe_filename}"
         upload = UploadAsset(
             id=upload_id,
