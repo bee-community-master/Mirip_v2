@@ -40,6 +40,8 @@
 	let statusMessage = $state('');
 	let pollCount = $state(0);
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let activeRunId = $state(0);
+	let isDestroyed = false;
 
 	const currentTier = $derived(diagnosisResult?.tier ?? null);
 	const topProbability = $derived(diagnosisResult?.probabilities[0] ?? null);
@@ -67,9 +69,12 @@
 		}
 	}
 
-	function resetDiagnosis() {
+	function invalidateCurrentRun() {
+		activeRunId += 1;
 		clearPollingTimer();
-		clearPreview();
+	}
+
+	function resetDiagnosisState() {
 		stage = 'upload';
 		selectedFile = null;
 		diagnosisResult = null;
@@ -77,6 +82,17 @@
 		error = '';
 		statusMessage = '';
 		pollCount = 0;
+		isDragging = false;
+	}
+
+	function isRunActive(runId: number) {
+		return !isDestroyed && runId === activeRunId;
+	}
+
+	function resetDiagnosis() {
+		invalidateCurrentRun();
+		clearPreview();
+		resetDiagnosisState();
 	}
 
 	function extractErrorMessage(value: unknown) {
@@ -116,11 +132,15 @@
 		}
 	}
 
-	async function pollDiagnosisJob(jobId: string) {
+	async function pollDiagnosisJob(jobId: string, runId: number) {
 		clearPollingTimer();
 
 		try {
 			const response = await getDiagnosisJobStatus(jobId);
+
+			if (!isRunActive(runId)) {
+				return;
+			}
 
 			currentJob = response.job;
 			pollCount += 1;
@@ -146,9 +166,13 @@
 
 			statusMessage = `${getJobStatusLabel(response.job.status)} 상태입니다. 결과가 준비되면 자동으로 갱신됩니다.`;
 			pollTimer = setTimeout(() => {
-				void pollDiagnosisJob(jobId);
+				void pollDiagnosisJob(jobId, runId);
 			}, pollIntervalInMs);
 		} catch (caughtError) {
+			if (!isRunActive(runId)) {
+				return;
+			}
+
 			stage = transitionDiagnosisStage(stage, { type: 'request_failed' });
 			error = extractErrorMessage(caughtError);
 			statusMessage = '';
@@ -158,7 +182,19 @@
 	async function beginAnalysis(file: File) {
 		try {
 			validateFile(file);
-			resetDiagnosis();
+		} catch (caughtError) {
+			error = extractErrorMessage(caughtError);
+			stage = 'upload';
+			return;
+		}
+
+		let runId = 0;
+
+		try {
+			invalidateCurrentRun();
+			clearPreview();
+			resetDiagnosisState();
+			runId = activeRunId;
 			error = '';
 			selectedFile = file;
 			previewUrl = URL.createObjectURL(file);
@@ -167,13 +203,26 @@
 
 			const uploadResponse = await createUploadSession(file);
 
+			if (!isRunActive(runId)) {
+				return;
+			}
+
 			if (!isFakeUploadMode(uploadResponse.data.session, uploadResponse.headers)) {
 				statusMessage = '이미지를 업로드하고 있습니다.';
 				await uploadToSignedUrl(uploadResponse.data.session, file);
 			}
 
+			if (!isRunActive(runId)) {
+				return;
+			}
+
 			statusMessage = '업로드를 확정하고 진단 작업을 생성하고 있습니다.';
 			const completedUpload = await completeUpload(uploadResponse.data.upload.id);
+
+			if (!isRunActive(runId)) {
+				return;
+			}
+
 			const job = await createDiagnosisJob({
 				upload_ids: [completedUpload.upload.id],
 				job_type: 'evaluate',
@@ -183,11 +232,19 @@
 				language: 'ko'
 			});
 
+			if (!isRunActive(runId)) {
+				return;
+			}
+
 			currentJob = job;
 			pollCount = 0;
 			statusMessage = '진단 작업이 접수되었습니다. 결과를 확인하는 중입니다.';
-			await pollDiagnosisJob(job.id);
+			await pollDiagnosisJob(job.id, runId);
 		} catch (caughtError) {
+			if (!isRunActive(runId)) {
+				return;
+			}
+
 			stage = transitionDiagnosisStage(stage, { type: 'request_failed' });
 			error = extractErrorMessage(caughtError);
 			statusMessage = '';
@@ -217,7 +274,8 @@
 	}
 
 	onDestroy(() => {
-		clearPollingTimer();
+		isDestroyed = true;
+		invalidateCurrentRun();
 		clearPreview();
 	});
 </script>
@@ -393,6 +451,26 @@
 									<div class="mt-2 text-sm font-medium text-white/72">
 										{formattedUpdatedAt ?? '-'}
 									</div>
+								</div>
+
+								<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+									<div class="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-white/35">
+										Uploaded Preview
+									</div>
+									<div class="overflow-hidden rounded-[18px] border border-white/8">
+										<img
+											src={previewUrl ?? 'https://images.unsplash.com/photo-1593472807861-5bb884af28f6?q=80&w=800&auto=format&fit=crop'}
+											alt="진단에 사용한 업로드 이미지"
+											width="800"
+											height="1000"
+											class="aspect-[4/5] w-full object-cover"
+										/>
+									</div>
+									{#if selectedFile}
+										<div class="mt-3 text-xs text-white/52">
+											{selectedFile.name} · {Math.round(selectedFile.size / 1024)} KB
+										</div>
+									{/if}
 								</div>
 							</div>
 						</div>
