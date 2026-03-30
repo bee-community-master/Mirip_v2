@@ -180,7 +180,7 @@ def _remote_python(remote_root: str) -> str:
 
 
 def _bash_command(parts: list[str]) -> str:
-    script = "; ".join(parts)
+    script = "\n".join(parts)
     return f"bash -lc {shlex.quote(script)}"
 
 
@@ -318,6 +318,7 @@ def pull_artifacts(config_path: str, instance_id: int) -> int:
     ]
     artifact_dirs = (
         (TRAIN_CHECKPOINTS_DIR, ROOT / CHECKPOINTS_REL_DIR),
+        (f"{TRAIN_ROOT}/{LEGACY_CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}", ROOT / CHECKPOINTS_REL_DIR / TRAIN_MODEL_SLUG),
         (TRAIN_REPORTS_DIR, ROOT / REPORTS_REL_DIR),
         (TRAIN_ANCHORS_DIR, ROOT / ANCHORS_REL_DIR),
     )
@@ -352,17 +353,16 @@ def build_remote_prune_command(
         command_parts.append(f'KEEP_{index}={shlex.quote(checkpoint)}')
     candidate_epoch = checkpoint_epoch_value(registry_candidate_checkpoint)
     if candidate_epoch is not None:
+        remote_epoch_find_commands = " ; ".join(
+            f'find {shlex.quote(root)} -type f -name "checkpoint_epoch_*.pt" 2>/dev/null'
+            for root in REMOTE_CHECKPOINT_ROOTS
+        )
         command_parts.extend(
             [
                 f"REGISTRY_CANDIDATE_EPOCH={candidate_epoch}",
                 "LATEST_REMOTE_EPOCH=$(" +
-                "{" +
-                " ".join(
-                    [
-                        f'find {shlex.quote(root)} -type f -name "checkpoint_epoch_*.pt" 2>/dev/null'
-                        for root in REMOTE_CHECKPOINT_ROOTS
-                    ]
-                ) +
+                "{ " +
+                remote_epoch_find_commands +
                 "; } | sed -E 's|.*checkpoint_epoch_0*([0-9]+)\\.pt|\\1|' | sort -n | tail -n 1)",
                 'if [ -n "$LATEST_REMOTE_EPOCH" ] && [ "$LATEST_REMOTE_EPOCH" -gt "$REGISTRY_CANDIDATE_EPOCH" ]; then echo "Registry is stale on remote: candidate epoch $REGISTRY_CANDIDATE_EPOCH, newest checkpoint epoch $LATEST_REMOTE_EPOCH" >&2; exit 1; fi',
             ]
@@ -386,6 +386,22 @@ def build_remote_prune_command(
         ]
     )
     return _bash_command(command_parts)
+
+
+def execute_remote_command_over_ssh(client: VastClient, instance_id: int, remote_command: str) -> int:
+    host, port = get_connection_info(client, instance_id)
+    privkey_path = normalize_path(os.getenv("VAST_SSH_PRIVKEY_PATH"))
+    cmd = [
+        "ssh",
+        "-p",
+        str(port),
+        "-o",
+        "StrictHostKeyChecking=no",
+    ]
+    if privkey_path:
+        cmd.extend(["-i", str(privkey_path)])
+    cmd.extend([f"root@{host}", remote_command])
+    return run_local_command(cmd)
 
 
 def sync_prune(config_path: str, instance_id: int) -> int:
@@ -415,7 +431,7 @@ def sync_prune(config_path: str, instance_id: int) -> int:
     )
     api_key = require_env("VAST_API_KEY")
     client = VastClient(api_key)
-    return execute_stage(client, instance_id, command, follow=True, follow_delay=3)
+    return execute_remote_command_over_ssh(client, instance_id, command)
 
 
 def build_launch_agent_payload(config_path: str) -> dict[str, object]:

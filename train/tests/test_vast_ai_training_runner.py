@@ -45,6 +45,9 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("REGISTRY_CANDIDATE_EPOCH=9", command)
         self.assertIn("LATEST_REMOTE_EPOCH", command)
         self.assertNotIn("then;", command)
+        self.assertNotIn("do;", command)
+        self.assertNotIn("{find", command)
+        self.assertNotIn("2>/dev/null find", command)
 
     def test_build_launch_agent_payload_targets_sync_prune(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -57,6 +60,71 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("sync-prune", payload["ProgramArguments"])
         self.assertIn(str(config_path), payload["ProgramArguments"])
         self.assertEqual(payload["StartInterval"], 900)
+
+    def test_execute_remote_command_over_ssh_uses_instance_connection_info(self) -> None:
+        fake_client = object()
+        expected_key_path = str(Path("/tmp/vast_key").resolve())
+        with (
+            mock.patch.object(vast_ai_training_runner, "get_connection_info", return_value=("ssh1.vast.ai", 31416)),
+            mock.patch.object(vast_ai_training_runner, "run_local_command", return_value=0) as run_local_command,
+            mock.patch.dict(os.environ, {"VAST_SSH_PRIVKEY_PATH": "/tmp/vast_key"}, clear=False),
+        ):
+            result = vast_ai_training_runner.execute_remote_command_over_ssh(
+                fake_client,
+                33831416,
+                "bash -lc 'echo ok'",
+            )
+
+        self.assertEqual(result, 0)
+        run_local_command.assert_called_once_with(
+            [
+                "ssh",
+                "-p",
+                "31416",
+                "-o",
+                "StrictHostKeyChecking=no",
+                "-i",
+                expected_key_path,
+                "root@ssh1.vast.ai",
+                "bash -lc 'echo ok'",
+            ]
+        )
+
+    def test_pull_artifacts_downloads_legacy_checkpoint_root_into_output_models(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_root = Path(temp_dir) / "repo"
+            train_root = repo_root / "train"
+            train_root.mkdir(parents=True, exist_ok=True)
+            config_path = repo_root / "config.toml"
+            config_path.write_text("", encoding="utf-8")
+
+            recorded_commands: list[list[str]] = []
+
+            def _record_command(cmd: list[str], cwd: Path | None = None) -> int:
+                recorded_commands.append(cmd)
+                return 0
+
+            with (
+                mock.patch.object(vast_ai_training_runner, "ROOT", train_root),
+                mock.patch.object(vast_ai_training_runner, "require_env", return_value="vast-api-key"),
+                mock.patch.object(vast_ai_training_runner, "get_connection_info", return_value=("ssh1.vast.ai", 31416)),
+                mock.patch.object(vast_ai_training_runner, "get_workspace_config", return_value={"remote_root": "/workspace/mirip_v2"}),
+                mock.patch.object(vast_ai_training_runner, "run_local_command", side_effect=_record_command),
+                mock.patch.object(vast_ai_training_runner, "VastClient"),
+                mock.patch.dict(os.environ, {"VAST_SSH_PRIVKEY_PATH": "/tmp/vast_key"}, clear=False),
+            ):
+                result = vast_ai_training_runner.pull_artifacts(str(config_path), 33831416)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(len(recorded_commands), 4)
+        self.assertIn(
+            "root@ssh1.vast.ai:/workspace/mirip_v2/train/checkpoints/dinov3_vit7b16/",
+            recorded_commands[1],
+        )
+        self.assertIn(
+            str(train_root / "output_models" / "checkpoints" / "dinov3_vit7b16"),
+            recorded_commands[1],
+        )
 
     def test_load_postprocess_registry_requires_selected_best_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
