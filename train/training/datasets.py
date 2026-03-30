@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 from typing import Any
 
@@ -9,26 +8,18 @@ from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoImageProcessor
 
-from .utils import PROJECT_ROOT, resolve_project_path
+from .utils import load_rows_from_csv, resolve_staged_image_path
 
 
 def resolve_image_path(image_root: str | Path, image_path: str) -> Path:
-    relative = Path(image_path)
-    image_root_path = resolve_project_path(image_root)
-    candidates = [
-        PROJECT_ROOT / relative,
-        image_root_path / relative,
-        image_root_path / "raw_images" / relative.name,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    raise FileNotFoundError(f"Unable to resolve image path: {image_path}")
+    resolved = resolve_staged_image_path(image_root, image_path)
+    if resolved is None:
+        raise FileNotFoundError(f"Unable to resolve staged image path: {image_path}")
+    return resolved
 
 
 def load_metadata_rows(path: str | Path) -> list[dict[str, str]]:
-    with resolve_project_path(path).open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return load_rows_from_csv(path)
 
 
 class DinoPairDataset(Dataset):

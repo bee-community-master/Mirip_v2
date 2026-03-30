@@ -16,7 +16,7 @@ from training.config import DinoV3TrainingConfig
 from training.datasets import DinoPairDataset
 from training.models import DinoV3PairwiseModel
 from training.trainer import DinoV3Trainer
-from training.utils import set_seed
+from training.utils import resolve_project_path, set_seed
 
 
 def parse_args() -> argparse.Namespace:
@@ -107,14 +107,15 @@ def main() -> int:
     trainer = DinoV3Trainer(model=model, config=config, resume_from=args.resume_from)
     summary = trainer.train(train_loader, val_loader)
 
-    report_path = Path(args.report) if args.report else Path(args.output_dir) / "training_summary.json"
+    report_path = resolve_project_path(args.report) if args.report else Path(config.checkpoint_dir) / "training_summary.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint_dir = Path(config.checkpoint_dir)
     payload = {
         "config": config.to_dict(),
         **summary,
         "paths": {
-            "best_checkpoint": str(Path(args.output_dir) / "best_model.pt"),
-            "checkpoint_dir": str(Path(args.output_dir)),
+            "best_checkpoint": str(checkpoint_dir / "best_model.pt"),
+            "checkpoint_dir": str(checkpoint_dir),
         },
     }
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

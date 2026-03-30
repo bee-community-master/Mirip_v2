@@ -6,7 +6,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from .utils import PROJECT_ROOT, resolve_project_path
+from .utils import normalize_staged_image_reference, resolve_project_path, resolve_staged_image_path
 
 VALID_TIERS = ("S", "A", "B", "C")
 TIER_BASE_SCORES = {
@@ -119,16 +119,7 @@ def make_anchor_group_key(university: str, normalized_dept: str) -> str | None:
 
 
 def resolve_image_path(image_root: str | Path, image_path: str) -> Path | None:
-    candidates = []
-    relative = Path(image_path)
-    image_root_path = resolve_project_path(image_root)
-    candidates.append(PROJECT_ROOT / relative)
-    candidates.append(image_root_path / relative)
-    candidates.append(image_root_path / "raw_images" / relative.name)
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    return None
+    return resolve_staged_image_path(image_root, image_path)
 
 
 def compute_tier_score(
@@ -207,8 +198,12 @@ def build_snapshot_manifest(
             skipped["missing_anchor_group"] += 1
             continue
 
-        relative_image_path = str(images[0])
-        resolved_image = resolve_image_path(image_root, relative_image_path)
+        normalized_image_path = normalize_staged_image_reference(images[0])
+        if normalized_image_path is None:
+            skipped["invalid_image_reference"] += 1
+            continue
+
+        resolved_image = resolve_image_path(image_root, normalized_image_path)
         if resolved_image is None:
             skipped["missing_image_file"] += 1
             continue
@@ -223,7 +218,7 @@ def build_snapshot_manifest(
 
         row = {
             "post_no": int(item.get("post_no") or Path(item["_source_path"]).stem),
-            "image_path": relative_image_path,
+            "image_path": normalized_image_path,
             "tier": tier,
             "tier_score": tier_score,
             "normalized_dept": normalized_dept,

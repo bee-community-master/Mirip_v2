@@ -45,9 +45,20 @@ __pycache__/
 *.pyo
 
 train/logs/
-train/anchors/
-train/checkpoints/
-train/reports/
+train/anchors/*
+train/checkpoints/*
+train/reports/*
+!train/anchors/.gitkeep
+!train/checkpoints/.gitkeep
+!train/reports/.gitkeep
+
+/train/data/*
+!/train/data/metadata/
+!/train/data/raw_images/
+/train/data/metadata/*
+/train/data/raw_images/*
+!/train/data/metadata/.gitkeep
+!/train/data/raw_images/.gitkeep
 
 train/training/data/*.csv
 train/training/data/*.json

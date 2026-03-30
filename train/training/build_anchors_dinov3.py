@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 from training.anchors import build_anchor_store
 from training.config import DinoV3TrainingConfig
 from training.models import DinoV3PairwiseModel
-from training.utils import set_seed
+from training.utils import resolve_project_path, set_seed
 
 
 def parse_args() -> argparse.Namespace:
@@ -35,7 +35,7 @@ def main() -> int:
     set_seed(args.seed)
 
     map_location = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
-    checkpoint = torch.load(args.checkpoint, map_location=map_location)
+    checkpoint = torch.load(resolve_project_path(args.checkpoint), map_location=map_location)
     config_dict = checkpoint.get("config", DinoV3TrainingConfig().to_dict())
     model = DinoV3PairwiseModel(
         model_name=config_dict.get("model_name", "facebook/dinov3-vitl16-pretrain-lvd1689m"),
@@ -64,7 +64,7 @@ def main() -> int:
         "metadata": anchors.metadata,
     }
     if args.report:
-        report_path = Path(args.report)
+        report_path = resolve_project_path(args.report)
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(payload, indent=2, ensure_ascii=False))

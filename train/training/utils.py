@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+RAW_IMAGES_DIRNAME = "raw_images"
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -20,6 +21,31 @@ def resolve_project_path(path: str | Path) -> Path:
     if candidate.is_absolute():
         return candidate
     return (PROJECT_ROOT / candidate).resolve()
+
+
+def normalize_staged_image_reference(image_path: str | Path) -> str | None:
+    raw_value = str(image_path).strip()
+    if not raw_value:
+        return None
+
+    candidate = Path(raw_value)
+    if candidate.is_absolute():
+        return None
+    if candidate.suffix.lower() != ".jpg":
+        return None
+    return f"{RAW_IMAGES_DIRNAME}/{candidate.name}"
+
+
+def resolve_staged_image_path(image_root: str | Path, image_path: str | Path) -> Path | None:
+    normalized = normalize_staged_image_reference(image_path)
+    if normalized is None:
+        return None
+
+    image_root_path = resolve_project_path(image_root)
+    candidate = image_root_path / normalized
+    if candidate.exists():
+        return candidate.resolve()
+    return None
 
 
 def write_json(path: str | Path, payload: Any) -> Path:

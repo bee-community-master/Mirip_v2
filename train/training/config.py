@@ -4,6 +4,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .utils import resolve_project_path
+
 
 @dataclass
 class DinoV3TrainingConfig:
@@ -17,7 +19,7 @@ class DinoV3TrainingConfig:
     early_stopping_min_delta: float = 1e-4
     gradient_clip_norm: float = 1.0
     scheduler_eta_min: float = 1e-6
-    checkpoint_dir: str = field(default_factory=lambda: "train/checkpoints/dinov3_vitl16")
+    checkpoint_dir: str = field(default_factory=lambda: "checkpoints/dinov3_vitl16")
     save_every_n_epochs: int = 1
     num_workers: int = 4
     pin_memory: bool = True
@@ -33,6 +35,7 @@ class DinoV3TrainingConfig:
     wandb_run_name: str | None = None
 
     def __post_init__(self) -> None:
+        self.checkpoint_dir = str(resolve_project_path(self.checkpoint_dir))
         Path(self.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         if self.learning_rate <= 0:
             raise ValueError("learning_rate must be positive")

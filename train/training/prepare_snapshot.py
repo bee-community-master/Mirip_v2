@@ -14,10 +14,10 @@ from training.utils import write_json, write_rows_to_csv
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a crawl snapshot manifest for Mirip_v2 training.")
-    parser.add_argument("--metadata-dir", default="data/crawled/metadata")
-    parser.add_argument("--image-root", default="data/crawled")
-    parser.add_argument("--output-manifest", default="train/training/data/snapshot_manifest.csv")
-    parser.add_argument("--report", default="train/reports/snapshot_report.json")
+    parser.add_argument("--metadata-dir", default="data/metadata")
+    parser.add_argument("--image-root", default="data")
+    parser.add_argument("--output-manifest", default="training/data/snapshot_manifest.csv")
+    parser.add_argument("--report", default="reports/snapshot_report.json")
     parser.add_argument("--min-group-size", type=int, default=15)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()

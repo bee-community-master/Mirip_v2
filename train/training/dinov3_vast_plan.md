@@ -3,17 +3,18 @@
 ## Summary
 
 - 이 문서는 `Mirip_v2/train` 실험용 DINOv3 학습 파이프라인과 Vast.ai 실행 절차의 기준 문서다.
-- 최종 데이터소스는 `Mirip_v2/data/crawled/metadata`와 대응 이미지이며, 크롤링 완료 후 snapshot manifest를 고정한 뒤에만 `train/training/data`를 재생성한다.
+- 최종 데이터소스는 `Mirip_v2/train/data/metadata`와 `Mirip_v2/train/data/raw_images`이며, 크롤링 완료 후 JPG 변환과 metadata path 정규화가 끝난 snapshot만 학습에 사용한다.
 - 구현 범위는 실험 전용이다. `Mirip` 운영 추론과 직접 호환시키지 않고, checkpoint, reports, anchors를 독립 산출물로 관리한다.
 - 실제 학습 단계는 `인터뷰 파싱 -> tier_score 보강 -> anchor_group 보강 -> pair 생성 -> pairwise 학습 -> 평가 -> anchor 재생성` 순서로 고정한다.
 
 ## Data Pipeline
 
 - `prepare_snapshot.py`
-  - `data/crawled/metadata`를 읽어 학습 적격 manifest를 생성한다.
+  - `data/metadata`를 읽어 학습 적격 manifest를 생성한다.
   - `interview_raw`에서 `competition_ratio`, `exam_topic`을 추출한다.
   - `tier_refined.tier_score` 규칙을 적용하되 경쟁률이 없으면 tier 기본점수 fallback을 사용한다.
   - `anchor_group = "{university}_{normalized_dept}"` 규칙을 적용하고 최소 그룹 크기 15 미만은 제외한다.
+  - metadata의 `images` 값은 staged JPG 상대경로만 허용하고 manifest에는 `raw_images/<name>.jpg`로 기록한다.
   - 산출물: `train/training/data/snapshot_manifest.csv`, `train/reports/snapshot_report.json`
 - `build_pairs.py`
   - snapshot manifest를 읽어 `metadata_{train,val,test}.csv`, `pairs_{train,val}.csv`, `pair_statistics.json`을 생성한다.
@@ -22,6 +23,7 @@
   - 최소 `tier_score` gap `5.0`
   - 이미지당 최대 등장 횟수 `20`
   - same-dept에서 `재현작` 우선
+  - 목표 pair 수를 채우지 못하면 partial output을 남기고 즉시 실패한다.
 
 ## Training Pipeline
 
@@ -65,15 +67,17 @@
 ## Vast.ai Runbook
 
 1. crawl 완료 후 local snapshot manifest 생성
-2. local에서 `train/training/data` 재생성
-3. Vast offer search
-4. 인스턴스 create + SSH attach + wait
-5. `Mirip_v2` 학습 관련 파일과 snapshot/pairs를 rsync 업로드
-6. remote bootstrap: Python env, `transformers`/`wandb` 등 설치
-7. smoke run
-8. smoke 통과 시 full run
-9. `train/checkpoints`, `train/reports`, `train/anchors`를 local로 회수
-10. 인스턴스 destroy
+2. local에서 JPG 변환 + metadata path 정규화
+3. `train/training/validate_training_readiness.py` 실행
+4. local에서 `train/training/data` 재생성
+5. Vast offer search
+6. 인스턴스 create + SSH attach + wait
+7. `Mirip_v2` 학습 관련 파일과 staged `train/data`를 rsync 업로드
+8. remote bootstrap: Python env, `transformers`/`wandb` 등 설치
+9. smoke run
+10. smoke 통과 시 full run
+11. `train/checkpoints`, `train/reports`, `train/anchors`를 local로 회수
+12. 인스턴스 destroy
 
 Smoke check:
 

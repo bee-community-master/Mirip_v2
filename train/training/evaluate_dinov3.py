@@ -17,7 +17,7 @@ from training.config import DinoV3TrainingConfig
 from training.datasets import DinoPairDataset
 from training.evaluation import evaluate_pairwise
 from training.models import DinoV3PairwiseModel
-from training.utils import set_seed
+from training.utils import resolve_project_path, set_seed
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,7 +41,8 @@ def main() -> int:
     set_seed(args.seed)
 
     map_location = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
-    checkpoint = torch.load(args.checkpoint, map_location=map_location)
+    checkpoint_path = resolve_project_path(args.checkpoint)
+    checkpoint = torch.load(checkpoint_path, map_location=map_location)
     config_dict = checkpoint.get("config", DinoV3TrainingConfig().to_dict())
     model = DinoV3PairwiseModel(
         model_name=config_dict.get("model_name", "facebook/dinov3-vitl16-pretrain-lvd1689m"),
@@ -82,11 +83,11 @@ def main() -> int:
         )
 
     payload = {
-        "checkpoint": args.checkpoint,
+        "checkpoint": str(checkpoint_path),
         "metrics": results,
         "config": config_dict,
     }
-    output_path = Path(args.output)
+    output_path = resolve_project_path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(payload, indent=2, ensure_ascii=False))
