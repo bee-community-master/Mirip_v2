@@ -6,6 +6,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import SectionHeading from '$lib/components/SectionHeading.svelte';
 	import { portfolioProfile, portfolioWorks } from '$lib/mocks/portfolio';
+	import { buildPathWithQuery } from '$lib/utils/query';
 
 	const activeWork = $derived(
 		portfolioWorks.find((work) => work.id === page.url.searchParams.get('work')) ?? null
@@ -15,9 +16,11 @@
 	);
 
 	function openWork(workId: string) {
-		const params = new URLSearchParams(page.url.searchParams);
-		params.set('work', workId);
-		void goto(`${page.url.pathname}?${params.toString()}`, {
+		const nextPath = buildPathWithQuery(page.url.pathname, page.url.searchParams, {
+			work: workId
+		});
+
+		void goto(nextPath, {
 			replaceState: true,
 			noScroll: true,
 			keepFocus: true
@@ -25,10 +28,11 @@
 	}
 
 	function closeWork() {
-		const params = new URLSearchParams(page.url.searchParams);
-		params.delete('work');
-		const query = params.toString();
-		void goto(query ? `${page.url.pathname}?${query}` : page.url.pathname, {
+		const nextPath = buildPathWithQuery(page.url.pathname, page.url.searchParams, {
+			work: null
+		});
+
+		void goto(nextPath, {
 			replaceState: true,
 			noScroll: true,
 			keepFocus: true

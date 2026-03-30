@@ -15,12 +15,12 @@
 	import { competitionFilters, competitionItems } from '$lib/mocks/competitions';
 	import type { CompetitionFilter } from '$lib/types';
 	import { filterCompetitions } from '$lib/utils/competition';
+	import { buildPathWithQuery, readQueryOption } from '$lib/utils/query';
 
 	let bookmarkedIds = $state<string[]>([]);
 
 	const selectedFilter = $derived(
-		(competitionFilters.find((filter) => filter === page.url.searchParams.get('filter')) ??
-			'전체') as CompetitionFilter
+		readQueryOption(page.url.searchParams, 'filter', competitionFilters, '전체')
 	);
 
 	const filteredCompetitions = $derived(filterCompetitions(competitionItems, selectedFilter));
@@ -29,24 +29,12 @@
 	);
 
 	function updateQuery(next: { filter?: CompetitionFilter; item?: string | null }) {
-		const params = new URLSearchParams(page.url.searchParams);
+		const nextPath = buildPathWithQuery(page.url.pathname, page.url.searchParams, {
+			filter: next.filter === '전체' ? null : next.filter,
+			item: next.item
+		});
 
-		if (next.filter) {
-			if (next.filter === '전체') {
-				params.delete('filter');
-			} else {
-				params.set('filter', next.filter);
-			}
-		}
-
-		if (next.item === null) {
-			params.delete('item');
-		} else if (next.item) {
-			params.set('item', next.item);
-		}
-
-		const query = params.toString();
-		void goto(query ? `${page.url.pathname}?${query}` : page.url.pathname, {
+		void goto(nextPath, {
 			replaceState: true,
 			noScroll: true,
 			keepFocus: true
@@ -251,13 +239,13 @@
 					<Star class="size-4" aria-hidden="true" />
 					왜 이 공모전이 잘 맞는지
 				</div>
-					<ul class="space-y-3">
-						{#each selectedCompetition.matchingReason as reason}
-							<li class="soft-text flex gap-3">
-								<span class="mt-2 size-1.5 rounded-full bg-fuchsia-300" aria-hidden="true"></span>
-								<span>{reason}</span>
-							</li>
-						{/each}
+				<ul class="space-y-3">
+					{#each selectedCompetition.matchingReason as reason}
+						<li class="soft-text flex gap-3">
+							<span class="mt-2 size-1.5 rounded-full bg-fuchsia-300" aria-hidden="true"></span>
+							<span>{reason}</span>
+						</li>
+					{/each}
 				</ul>
 			</div>
 

@@ -17,7 +17,13 @@
 	import SectionHeading from '$lib/components/SectionHeading.svelte';
 	import { diagnosisMock } from '$lib/mocks/diagnosis';
 	import type { ExpertTab, TierKey, UniversityKey } from '$lib/types';
+	import { buildPathWithQuery, readQueryOption } from '$lib/utils/query';
 
+	const tierOptions = ['FREE', 'STANDARD', 'PRO'] as const;
+	const universityOptions = ['HONGIK', 'KONKUK', 'KOOKMIN'] as const;
+	const expertOptions = ['AI', 'INSTRUCTOR', 'PROFESSOR'] as const;
+	const validImageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+	const maxUploadSizeInBytes = 10 * 1024 * 1024;
 	const tierOrder: Record<TierKey, number> = {
 		FREE: 0,
 		STANDARD: 1,
@@ -33,18 +39,12 @@
 	let isDragging = $state(false);
 	let analyzingTimer: ReturnType<typeof setTimeout> | null = null;
 
-	const tier = $derived(
-		(['FREE', 'STANDARD', 'PRO'].find((value) => value === page.url.searchParams.get('tier')) ??
-			'FREE') as TierKey
-	);
+	const tier = $derived(readQueryOption(page.url.searchParams, 'tier', tierOptions, 'FREE'));
 	const universityKey = $derived(
-		(['HONGIK', 'KONKUK', 'KOOKMIN'].find((value) => value === page.url.searchParams.get('uni')) ??
-			'HONGIK') as UniversityKey
+		readQueryOption(page.url.searchParams, 'uni', universityOptions, 'HONGIK')
 	);
 	const expertTab = $derived(
-		(['AI', 'INSTRUCTOR', 'PROFESSOR'].find(
-			(value) => value === page.url.searchParams.get('expert')
-		) ?? 'AI') as ExpertTab
+		readQueryOption(page.url.searchParams, 'expert', expertOptions, 'AI')
 	);
 
 	const selectedUniversity = $derived(diagnosisMock.universities[universityKey]);
@@ -52,17 +52,13 @@
 	const proUnlocked = $derived(tierOrder[tier] >= tierOrder.PRO);
 
 	function updateQuery(next: { tier?: TierKey; uni?: UniversityKey; expert?: ExpertTab }) {
-		const params = new URLSearchParams(page.url.searchParams);
+		const nextPath = buildPathWithQuery(page.url.pathname, page.url.searchParams, {
+			tier: next.tier === 'FREE' ? null : next.tier,
+			uni: next.uni === 'HONGIK' ? null : next.uni,
+			expert: next.expert === 'AI' ? null : next.expert
+		});
 
-		if (next.tier && next.tier !== 'FREE') params.set('tier', next.tier);
-		if (next.tier === 'FREE') params.delete('tier');
-		if (next.uni && next.uni !== 'HONGIK') params.set('uni', next.uni);
-		if (next.uni === 'HONGIK') params.delete('uni');
-		if (next.expert && next.expert !== 'AI') params.set('expert', next.expert);
-		if (next.expert === 'AI') params.delete('expert');
-
-		const query = params.toString();
-		void goto(query ? `${page.url.pathname}?${query}` : page.url.pathname, {
+		void goto(nextPath, {
 			replaceState: true,
 			noScroll: true,
 			keepFocus: true
@@ -84,13 +80,12 @@
 	}
 
 	function beginAnalysis(file: File) {
-		const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
-		if (!validTypes.includes(file.type)) {
+		if (!validImageTypes.includes(file.type)) {
 			error = 'PNG, JPG, JPEG, WebP 형식의 이미지만 업로드할 수 있습니다.';
 			return;
 		}
 
-		if (file.size > 10 * 1024 * 1024) {
+		if (file.size > maxUploadSizeInBytes) {
 			error = '파일 크기는 10 MB 이하로 올려주세요.';
 			return;
 		}
