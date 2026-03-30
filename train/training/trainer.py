@@ -15,6 +15,7 @@ except ImportError:
     wandb = None
 
 from .config import DinoV3TrainingConfig
+from .utils import resolve_project_path
 
 
 def resolve_precision(requested: str, device: str) -> str:
@@ -183,7 +184,7 @@ class DinoV3Trainer:
         return checkpoint_path
 
     def load_checkpoint(self, checkpoint_path: str) -> None:
-        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        checkpoint = torch.load(resolve_project_path(checkpoint_path), map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])

@@ -15,11 +15,20 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 TRAIN_ROOT = "train"
 TRAINING_DIR = f"{TRAIN_ROOT}/training"
+TRAIN_DATA_DIR = f"{TRAIN_ROOT}/data"
+TRAIN_METADATA_DIR = f"{TRAIN_DATA_DIR}/metadata"
+TRAIN_RAW_IMAGES_DIR = f"{TRAIN_DATA_DIR}/raw_images"
 TRAINING_DATA_DIR = f"{TRAINING_DIR}/data"
 TRAIN_CONFIG_PATH = f"{TRAIN_ROOT}/configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml"
 TRAIN_REPORTS_DIR = f"{TRAIN_ROOT}/reports"
 TRAIN_CHECKPOINTS_DIR = f"{TRAIN_ROOT}/checkpoints"
 TRAIN_ANCHORS_DIR = f"{TRAIN_ROOT}/anchors"
+TRAIN_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
+TRAIN_MODEL_SLUG = "dinov3_vit7b16"
+TRAIN_BATCH_SIZE = 16
+TRAIN_GRADIENT_ACCUMULATION_STEPS = 4
+TRAIN_NUM_WORKERS = 8
+TRAIN_PREFETCH_FACTOR = 4
 
 from vast_ai_control import (  # noqa: E402
     VastClient,
@@ -45,11 +54,22 @@ def _bootstrap_parts(remote_root: str) -> list[str]:
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        "python3 -m venv .venv",
+        "python3 -m venv --system-site-packages .venv",
         ". .venv/bin/activate",
         "python -m pip install --upgrade pip",
         f"python -m pip install -r {TRAINING_DIR}/requirements.txt",
-        f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16 {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR} {TRAINING_DATA_DIR}",
+        "mkdir -p "
+        + " ".join(
+            [
+                f"{TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16",
+                f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}",
+                TRAIN_REPORTS_DIR,
+                TRAIN_ANCHORS_DIR,
+                TRAINING_DATA_DIR,
+                TRAIN_METADATA_DIR,
+                TRAIN_RAW_IMAGES_DIR,
+            ]
+        ),
     ]
 
 
@@ -57,55 +77,57 @@ def _build_bootstrap_command(remote_root: str) -> str:
     return _bash_command(_bootstrap_parts(remote_root))
 
 
-def _prepare_data_parts(remote_root: str) -> list[str]:
+def _validate_upload_parts(remote_root: str) -> list[str]:
     python_bin = _remote_python(remote_root)
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/crawled/metadata --image-root data/crawled --output-manifest {TRAINING_DATA_DIR}/snapshot_manifest.csv --report {TRAIN_REPORTS_DIR}/snapshot_report.json",
-        f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAINING_DATA_DIR}/snapshot_manifest.csv --output-dir {TRAINING_DATA_DIR} --total-pairs 50000",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest training/data/snapshot_manifest.csv --prepared-dir training/data --baseline-readiness-report reports/readiness_report.json --baseline-snapshot-report reports/snapshot_report.json --total-pairs 50000 --max-appearances 30 --report reports/prepared_readiness_report.json",
     ]
 
 
-def _build_prepare_data_command(remote_root: str) -> str:
-    return _bash_command(_prepare_data_parts(remote_root))
+def _build_validate_upload_command(remote_root: str) -> str:
+    return _bash_command(_validate_upload_parts(remote_root))
 
 
 def _build_smoke_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
-    checkpoint_dir = f"{TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16/smoke"
+    checkpoint_dir = f"checkpoints/{TRAIN_MODEL_SLUG}/smoke"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
-    parts = _prepare_data_parts(remote_root)
-    parts.extend(
+    anchors_path = f"anchors/{TRAIN_MODEL_SLUG}_anchors.pt"
+    return _bash_command(
         [
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train {TRAINING_DATA_DIR}/pairs_train.csv --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --output-dir {checkpoint_dir} --epochs 1 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_smoke_train.json",
-            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata {TRAINING_DATA_DIR}/metadata_train.csv --image-root . --output {TRAIN_ANCHORS_DIR}/anchors.pt --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_smoke_anchors.json",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --anchors {TRAIN_ANCHORS_DIR}/anchors.pt --metadata-eval {TRAINING_DATA_DIR}/metadata_val.csv --output {TRAIN_REPORTS_DIR}/dinov3_vitl16_smoke.json",
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 1 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/{TRAIN_MODEL_SLUG}_smoke_train.json",
+            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output {anchors_path} --report reports/{TRAIN_MODEL_SLUG}_smoke_anchors.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors {anchors_path} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/{TRAIN_MODEL_SLUG}_smoke.json",
         ]
     )
-    return _bash_command(parts)
 
 
 def _build_full_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
-    checkpoint_dir = f"{TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16/full"
+    checkpoint_dir = f"checkpoints/{TRAIN_MODEL_SLUG}/full"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
-    parts = _prepare_data_parts(remote_root)
-    parts.extend(
+    smoke_checkpoint = f"checkpoints/{TRAIN_MODEL_SLUG}/smoke/best_model.pt"
+    anchors_path = f"anchors/{TRAIN_MODEL_SLUG}_anchors.pt"
+    return _bash_command(
         [
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train {TRAINING_DATA_DIR}/pairs_train.csv --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --output-dir {checkpoint_dir} --epochs 50 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_full_train.json",
-            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata {TRAINING_DATA_DIR}/metadata_train.csv --image-root . --output {TRAIN_ANCHORS_DIR}/anchors.pt --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_full_anchors.json",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --anchors {TRAIN_ANCHORS_DIR}/anchors.pt --metadata-eval {TRAINING_DATA_DIR}/metadata_val.csv --output {TRAIN_REPORTS_DIR}/dinov3_vitl16_full.json",
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --resume-from {smoke_checkpoint} --epochs 50 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/{TRAIN_MODEL_SLUG}_full_train.json",
+            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output {anchors_path} --report reports/{TRAIN_MODEL_SLUG}_full_anchors.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors {anchors_path} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/{TRAIN_MODEL_SLUG}_full.json",
         ]
     )
-    return _bash_command(parts)
 
 
 def build_stage_command(stage: str, remote_root: str) -> str:
     if stage == "bootstrap":
         return _build_bootstrap_command(remote_root)
-    if stage == "prepare-data":
-        return _build_prepare_data_command(remote_root)
+    if stage == "validate-upload":
+        return _build_validate_upload_command(remote_root)
     if stage == "smoke":
         return _build_smoke_command(remote_root)
     if stage == "full":
@@ -154,7 +176,7 @@ def parse_args() -> argparse.Namespace:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=TRAIN_CONFIG_PATH)
-    common.add_argument("--stage", choices=["bootstrap", "prepare-data", "smoke", "full"], required=True)
+    common.add_argument("--stage", choices=["bootstrap", "validate-upload", "smoke", "full"], required=True)
 
     print_cmd = subparsers.add_parser("print-command", parents=[common], help="Print the remote command for a stage")
 

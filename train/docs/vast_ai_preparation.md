@@ -57,7 +57,20 @@ SSH/Jupyter 런타입은 Docker entrypoint를 Vast 쪽 초기화 스크립트로
 - 로컬 파일 rsync 업로드 루틴
 - SSH / execute / destroy 제어 스크립트
 - DINOv3 학습용 stage runner (`train/scripts/vast_ai_training_runner.py`)
-- bootstrap / prepare-data / smoke / full 원격 실행 커맨드
+- bootstrap / validate-upload / smoke / full 원격 실행 커맨드
+
+## 현재 Mirip_v2 학습 직전 절차
+
+1. `train/data` freeze
+2. local raw validator 실행
+3. local snapshot/pairs/reports 생성
+4. local prepared validator 실행
+5. Vast instance 준비
+6. `train/data`, `train/training/data`, `train/reports` 업로드
+7. remote `bootstrap`
+8. remote `validate-upload`
+9. remote `smoke`
+10. smoke 통과 후 `full`
 
 ## 공식 문서
 

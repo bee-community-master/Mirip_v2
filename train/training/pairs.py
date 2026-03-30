@@ -7,6 +7,12 @@ from typing import Any
 from .utils import load_rows_from_csv, write_json, write_rows_to_csv
 
 
+class PairGenerationError(RuntimeError):
+    def __init__(self, message: str, stats: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.stats = stats
+
+
 def _row_to_item(row: dict[str, str]) -> dict[str, Any]:
     return {
         "post_no": int(row["post_no"]),
@@ -164,14 +170,30 @@ def _select_with_appearance_limit(
     return selected
 
 
+def _build_shortfall_reasons(
+    pair_label: str,
+    target: int,
+    selected: int,
+    available_candidates: int,
+) -> list[str]:
+    reasons: list[str] = []
+    if selected >= target:
+        return reasons
+    if available_candidates < target:
+        reasons.append(f"insufficient_{pair_label}_candidates")
+    if selected < min(target, available_candidates):
+        reasons.append(f"{pair_label}_selection_limited_by_max_appearances")
+    return reasons
+
+
 def generate_pairs(
     items: list[dict[str, Any]],
     total_pairs: int,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
-    max_appearances: int = 20,
+    max_appearances: int = 30,
     seed: int = 42,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rng = random.Random(seed)
     same_target = int(total_pairs * same_dept_ratio)
     cross_target = total_pairs - same_target
@@ -198,7 +220,29 @@ def generate_pairs(
 
     pairs = same_selected + cross_selected
     rng.shuffle(pairs)
-    return pairs
+    diagnostics = {
+        "requested_pairs": total_pairs,
+        "requested_same_dept_pairs": same_target,
+        "requested_cross_dept_pairs": cross_target,
+        "available_same_dept_candidates": len(same_candidates),
+        "available_cross_dept_candidates": len(cross_candidates),
+        "selected_same_dept_pairs": len(same_selected),
+        "selected_cross_dept_pairs": len(cross_selected),
+        "produced_pairs": len(pairs),
+        "shortfall_reasons": _build_shortfall_reasons(
+            pair_label="same_dept",
+            target=same_target,
+            selected=len(same_selected),
+            available_candidates=len(same_candidates),
+        )
+        + _build_shortfall_reasons(
+            pair_label="cross_dept",
+            target=cross_target,
+            selected=len(cross_selected),
+            available_candidates=len(cross_candidates),
+        ),
+    }
+    return pairs, diagnostics
 
 
 def build_pair_outputs(
@@ -209,8 +253,9 @@ def build_pair_outputs(
     total_pairs: int = 50_000,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
-    max_appearances: int = 20,
+    max_appearances: int = 30,
     seed: int = 42,
+    strict: bool = True,
 ) -> dict[str, Any]:
     rows = [_row_to_item(row) for row in load_rows_from_csv(manifest_csv)]
     train_items, val_items, test_items = split_items_by_image(
@@ -219,17 +264,20 @@ def build_pair_outputs(
         val_ratio=val_ratio,
         seed=seed,
     )
-    train_pairs = generate_pairs(
+    train_target = int(total_pairs * train_ratio)
+    val_target = max(int(total_pairs * val_ratio), 1_000)
+
+    train_pairs, train_pair_diagnostics = generate_pairs(
         items=train_items,
-        total_pairs=int(total_pairs * train_ratio),
+        total_pairs=train_target,
         same_dept_ratio=same_dept_ratio,
         min_score_gap=min_score_gap,
         max_appearances=max_appearances,
         seed=seed,
     )
-    val_pairs = generate_pairs(
+    val_pairs, val_pair_diagnostics = generate_pairs(
         items=val_items,
-        total_pairs=max(int(total_pairs * val_ratio), 1_000),
+        total_pairs=val_target,
         same_dept_ratio=same_dept_ratio,
         min_score_gap=min_score_gap,
         max_appearances=max_appearances,
@@ -274,6 +322,12 @@ def build_pair_outputs(
         "test_items": len(test_items),
         "pairs_train": len(train_pairs),
         "pairs_val": len(val_pairs),
+        "pair_targets": {
+            "train": train_target,
+            "val": val_target,
+        },
+        "pair_generation_train": train_pair_diagnostics,
+        "pair_generation_val": val_pair_diagnostics,
         "same_dept_ratio_train": (
             sum(1 for row in train_pairs if row["pair_type"] == "same_dept") / max(len(train_pairs), 1)
         ),
@@ -291,5 +345,22 @@ def build_pair_outputs(
         "min_score_gap": min_score_gap,
         "max_appearances": max_appearances,
     }
+    stats["pair_shortfall"] = {
+        "train": {
+            "requested": train_target,
+            "produced": len(train_pairs),
+            "missing": max(train_target - len(train_pairs), 0),
+            "reasons": train_pair_diagnostics["shortfall_reasons"],
+        },
+        "val": {
+            "requested": val_target,
+            "produced": len(val_pairs),
+            "missing": max(val_target - len(val_pairs), 0),
+            "reasons": val_pair_diagnostics["shortfall_reasons"],
+        },
+    }
+    stats["pair_generation_ok"] = all(details["missing"] == 0 for details in stats["pair_shortfall"].values())
     write_json(f"{output_dir}/pair_statistics.json", stats)
+    if strict and not stats["pair_generation_ok"]:
+        raise PairGenerationError("Requested pair counts could not be satisfied.", stats)
     return stats

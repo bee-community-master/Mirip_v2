@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import os
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .utils import resolve_project_path
+
+DEFAULT_DINOV3_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
+
+
+def default_num_workers() -> int:
+    cpu_count = os.cpu_count() or 4
+    return max(1, min(8, cpu_count - 2))
+
 
 @dataclass
 class DinoV3TrainingConfig:
-    model_name: str = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+    model_name: str = DEFAULT_DINOV3_MODEL_NAME
+    backbone_dtype: str = "auto"
     learning_rate: float = 1e-4
     weight_decay: float = 0.05
     batch_size: int = 8
@@ -17,10 +28,12 @@ class DinoV3TrainingConfig:
     early_stopping_min_delta: float = 1e-4
     gradient_clip_norm: float = 1.0
     scheduler_eta_min: float = 1e-6
-    checkpoint_dir: str = field(default_factory=lambda: "train/checkpoints/dinov3_vitl16")
+    checkpoint_dir: str = field(default_factory=lambda: "checkpoints/dinov3_vitl16")
     save_every_n_epochs: int = 1
-    num_workers: int = 4
+    num_workers: int = field(default_factory=default_num_workers)
     pin_memory: bool = True
+    persistent_workers: bool = True
+    prefetch_factor: int = 4
     device: str = "cuda"
     precision: str = "auto"
     seed: int = 42
@@ -33,6 +46,7 @@ class DinoV3TrainingConfig:
     wandb_run_name: str | None = None
 
     def __post_init__(self) -> None:
+        self.checkpoint_dir = str(resolve_project_path(self.checkpoint_dir))
         Path(self.checkpoint_dir).mkdir(parents=True, exist_ok=True)
         if self.learning_rate <= 0:
             raise ValueError("learning_rate must be positive")
@@ -44,6 +58,12 @@ class DinoV3TrainingConfig:
             raise ValueError("gradient_accumulation_steps must be positive")
         if self.max_epochs <= 0:
             raise ValueError("max_epochs must be positive")
+        if self.num_workers < 0:
+            raise ValueError("num_workers must be non-negative")
+        if self.prefetch_factor <= 0:
+            raise ValueError("prefetch_factor must be positive")
+        if self.backbone_dtype not in {"auto", "bf16", "fp16", "fp32"}:
+            raise ValueError("backbone_dtype must be one of: auto, bf16, fp16, fp32")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

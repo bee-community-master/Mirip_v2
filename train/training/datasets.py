@@ -1,103 +1,112 @@
 from __future__ import annotations
 
-import csv
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from transformers import AutoImageProcessor
 
-from .utils import PROJECT_ROOT, resolve_project_path
+from .utils import load_rows_from_csv, resolve_staged_image_path
 
 
 def resolve_image_path(image_root: str | Path, image_path: str) -> Path:
-    relative = Path(image_path)
-    image_root_path = resolve_project_path(image_root)
-    candidates = [
-        PROJECT_ROOT / relative,
-        image_root_path / relative,
-        image_root_path / "raw_images" / relative.name,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    raise FileNotFoundError(f"Unable to resolve image path: {image_path}")
+    resolved = resolve_staged_image_path(image_root, image_path)
+    if resolved is None:
+        raise FileNotFoundError(f"Unable to resolve staged image path: {image_path}")
+    return resolved
 
 
 def load_metadata_rows(path: str | Path) -> list[dict[str, str]]:
-    with resolve_project_path(path).open("r", encoding="utf-8", newline="") as handle:
-        return list(csv.DictReader(handle))
+    return load_rows_from_csv(path)
+
+
+@lru_cache(maxsize=8)
+def load_image_processor(model_name: str):
+    return AutoImageProcessor.from_pretrained(model_name)
+
+
+def load_rgb_image(path: str | Path) -> Image.Image:
+    with Image.open(path) as image:
+        return image.convert("RGB")
 
 
 class DinoPairDataset(Dataset):
     def __init__(
         self,
         pairs_csv: str | Path,
-        image_root: str | Path,
-        model_name: str,
     ) -> None:
-        self.image_root = image_root
-        self.model_name = model_name
-        self._processor = None
         self.rows = load_metadata_rows(pairs_csv)
-
-    def _get_processor(self):
-        if self._processor is None:
-            self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-        return self._processor
-
-    def _load_pixel_values(self, image_path: str) -> torch.Tensor:
-        path = resolve_image_path(self.image_root, image_path)
-        image = Image.open(path).convert("RGB")
-        processor = self._get_processor()
-        pixel_values = processor(images=image, return_tensors="pt")["pixel_values"]
-        return pixel_values.squeeze(0)
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, index: int):
         row = self.rows[index]
-        img1 = self._load_pixel_values(row["image_path_1"])
-        img2 = self._load_pixel_values(row["image_path_2"])
-        label = torch.tensor(int(row["label"]), dtype=torch.float32)
-        is_same_dept = torch.tensor(
+        return (
+            row["image_path_1"],
+            row["image_path_2"],
+            int(row["label"]),
             1 if row.get("pair_type", "") == "same_dept" else 0,
-            dtype=torch.long,
         )
-        return img1, img2, label, is_same_dept
+
+
+@dataclass
+class DinoPairBatchCollator:
+    image_root: str | Path
+    model_name: str
+
+    def _load_pixel_values(self, image_paths: Sequence[str]) -> torch.Tensor:
+        processor = load_image_processor(self.model_name)
+        images = [load_rgb_image(resolve_image_path(self.image_root, image_path)) for image_path in image_paths]
+        return processor(images=images, return_tensors="pt")["pixel_values"]
+
+    def __call__(self, batch: Sequence[tuple[str, str, int, int]]):
+        image_paths_1, image_paths_2, labels, is_same_dept = zip(*batch)
+        merged_pixel_values = self._load_pixel_values((*image_paths_1, *image_paths_2))
+        split_index = len(image_paths_1)
+        return (
+            merged_pixel_values[:split_index],
+            merged_pixel_values[split_index:],
+            torch.tensor(labels, dtype=torch.float32),
+            torch.tensor(is_same_dept, dtype=torch.long),
+        )
 
 
 class DinoMetadataDataset(Dataset):
     def __init__(
         self,
         metadata_csv: str | Path,
-        image_root: str | Path,
-        model_name: str,
     ) -> None:
         self.rows = load_metadata_rows(metadata_csv)
-        self.image_root = image_root
-        self.model_name = model_name
-        self._processor = None
-
-    def _get_processor(self):
-        if self._processor is None:
-            self._processor = AutoImageProcessor.from_pretrained(self.model_name)
-        return self._processor
 
     def __len__(self) -> int:
         return len(self.rows)
 
     def __getitem__(self, index: int):
         row = self.rows[index]
-        path = resolve_image_path(self.image_root, row["image_path"])
-        image = Image.open(path).convert("RGB")
-        pixel_values = self._get_processor()(images=image, return_tensors="pt")["pixel_values"].squeeze(0)
         return {
-            "pixel_values": pixel_values,
             "tier": row["tier"],
             "image_path": row["image_path"],
             "post_no": row.get("post_no", ""),
+        }
+
+
+@dataclass
+class DinoMetadataBatchCollator:
+    image_root: str | Path
+    model_name: str
+
+    def __call__(self, batch: Sequence[dict[str, str]]):
+        processor = load_image_processor(self.model_name)
+        images = [load_rgb_image(resolve_image_path(self.image_root, row["image_path"])) for row in batch]
+        pixel_values = processor(images=images, return_tensors="pt")["pixel_values"]
+        return {
+            "pixel_values": pixel_values,
+            "tier": [row["tier"] for row in batch],
+            "image_path": [row["image_path"] for row in batch],
+            "post_no": [row["post_no"] for row in batch],
         }
