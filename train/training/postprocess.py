@@ -101,14 +101,27 @@ def run_postprocess_for_checkpoint(
     persistent_workers: bool,
     device: str,
     precision: str,
+    model: torch.nn.Module | None = None,
+    config_dict: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    map_location = device if torch.cuda.is_available() or device == "cpu" else "cpu"
-    _, config_dict, model = load_checkpoint_model(checkpoint_path, map_location=map_location)
-    model.to(map_location)
-    model_name = _resolve_model_name(config_dict)
+    runtime_model = model
+    runtime_config = config_dict
+    if runtime_model is None:
+        map_location = device if torch.cuda.is_available() or device == "cpu" else "cpu"
+        _, runtime_config, runtime_model = load_checkpoint_model(checkpoint_path, map_location=map_location)
+        runtime_model.to(map_location)
+    elif runtime_config is None:
+        runtime_config = DinoV3TrainingConfig().to_dict()
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    assert runtime_model is not None
+    assert runtime_config is not None
+    model_name = _resolve_model_name(runtime_config)
 
     anchors = build_anchor_store(
-        model=model,
+        model=runtime_model,
         metadata_csv=metadata_train,
         image_root=image_root,
         model_name=model_name,
@@ -124,10 +137,10 @@ def run_postprocess_for_checkpoint(
         persistent_workers=persistent_workers,
     )
 
-    metrics = evaluate_pairwise(model=model, loader=loader, device=device, precision=precision)
+    metrics = evaluate_pairwise(model=runtime_model, loader=loader, device=device, precision=precision)
     metrics.update(
         evaluate_anchor_tier_accuracy(
-            model=model,
+            model=runtime_model,
             anchors=anchors,
             metadata_csv=metadata_eval,
             image_root=image_root,
@@ -140,7 +153,7 @@ def run_postprocess_for_checkpoint(
         checkpoint_path=checkpoint_path,
         anchors_output_path=anchors_output_path,
         metrics=metrics,
-        config_dict=config_dict,
+        config_dict=runtime_config,
     )
     report_path = resolve_project_path(report_output)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,6 +166,8 @@ def run_postprocess_for_checkpoint(
         best_checkpoint=best_checkpoint,
         best_report=best_report,
     )
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return {
         "report": payload,
         "registry": registry_payload,

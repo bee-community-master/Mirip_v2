@@ -185,7 +185,16 @@ def main() -> int:
     def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> None:
         if postprocess_kwargs is None:
             return
-        run_postprocess_for_checkpoint(checkpoint_path=checkpoint_path, **postprocess_kwargs)
+        if trainer.device.type == "cuda":
+            torch.cuda.empty_cache()
+        run_postprocess_for_checkpoint(
+            checkpoint_path=checkpoint_path,
+            model=trainer.model,
+            config_dict=config.to_dict(),
+            **postprocess_kwargs,
+        )
+        if trainer.device.type == "cuda":
+            torch.cuda.empty_cache()
 
     summary = trainer.train(
         train_loader,
