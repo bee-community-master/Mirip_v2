@@ -79,7 +79,7 @@
 							<span class="absolute inset-0 rounded-full bg-white/10"></span>
 						{/if}
 						<span class="relative z-10 flex items-center gap-2">
-							<item.icon class="size-4" />
+							<item.icon class="size-4" aria-hidden="true" />
 							{item.name}
 						</span>
 					</a>
@@ -89,7 +89,7 @@
 			<div class="flex items-center gap-3">
 				<button
 					type="button"
-					class="hidden rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:scale-[1.03] md:block"
+					class="hidden rounded-full bg-white px-5 py-2 text-sm font-semibold text-black transition hover:scale-[1.03] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white md:block"
 					onclick={() => {
 						authOpen = true;
 					}}
@@ -99,17 +99,17 @@
 
 				<button
 					type="button"
-					class="inline-flex rounded-full border border-white/10 bg-white/6 p-2 text-white md:hidden"
+					class="inline-flex rounded-full border border-white/10 bg-white/6 p-2 text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300 md:hidden"
 					onclick={() => {
 						mobileOpen = !mobileOpen;
 					}}
-					aria-label="메뉴 열기"
+					aria-label={mobileOpen ? '메뉴 닫기' : '메뉴 열기'}
 					aria-expanded={mobileOpen}
 				>
 					{#if mobileOpen}
-						<X class="size-5" />
+						<X class="size-5" aria-hidden="true" />
 					{:else}
-						<Menu class="size-5" />
+						<Menu class="size-5" aria-hidden="true" />
 					{/if}
 				</button>
 			</div>
@@ -121,18 +121,18 @@
 					{#each navItems as item}
 						<a
 							href={item.path}
-							class={`rounded-2xl px-4 py-3 text-sm font-semibold ${isActive(item.path) ? 'bg-white text-black' : 'bg-white/5 text-white/70'}`}
+							class={`rounded-2xl px-4 py-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300 ${isActive(item.path) ? 'bg-white text-black' : 'bg-white/5 text-white/70'}`}
 							onclick={closeMobileMenu}
 						>
 							<span class="flex items-center gap-2">
-								<item.icon class="size-4" />
+								<item.icon class="size-4" aria-hidden="true" />
 								{item.name}
 							</span>
 						</a>
 					{/each}
 					<button
 						type="button"
-						class="mt-3 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-black"
+						class="mt-3 rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
 						onclick={() => {
 							closeMobileMenu();
 							authOpen = true;

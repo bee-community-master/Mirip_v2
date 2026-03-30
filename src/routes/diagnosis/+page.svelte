@@ -167,7 +167,7 @@
 
 		{#if stage === 'upload'}
 			<label
-				class={`mx-auto flex h-80 w-full max-w-2xl cursor-pointer flex-col items-center justify-center rounded-[36px] border-2 border-dashed px-8 text-center transition-colors duration-200 ${isDragging ? 'border-fuchsia-400 bg-fuchsia-500/10' : 'border-white/16 bg-white/5 hover:border-fuchsia-400/50 hover:bg-white/8'}`}
+				class={`mx-auto flex h-80 w-full max-w-2xl cursor-pointer flex-col items-center justify-center rounded-[36px] border-2 border-dashed px-8 text-center transition-colors duration-200 focus-within:border-fuchsia-400 focus-within:bg-white/8 ${isDragging ? 'border-fuchsia-400 bg-fuchsia-500/10' : 'border-white/16 bg-white/5 hover:border-fuchsia-400/50 hover:bg-white/8'}`}
 				ondragover={(event) => {
 					event.preventDefault();
 					isDragging = true;
