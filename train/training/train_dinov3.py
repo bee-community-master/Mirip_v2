@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,8 +16,17 @@ sys.path.insert(0, str(ROOT))
 from training.config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig, default_num_workers
 from training.datasets import DinoPairBatchCollator, DinoPairDataset
 from training.models import DinoV3PairwiseModel
+from training.postprocess import run_postprocess_for_checkpoint
 from training.trainer import DinoV3Trainer
-from training.utils import resolve_project_path, set_seed
+from training.utils import project_relative_path, resolve_project_path, set_seed
+
+POSTPROCESS_ARG_NAMES = (
+    "postprocess_metadata_train",
+    "postprocess_metadata_eval",
+    "postprocess_anchors_output",
+    "postprocess_report",
+    "postprocess_registry",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -46,7 +56,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wandb-run-name")
     parser.add_argument("--wandb", action="store_true")
     parser.add_argument("--report")
+    parser.add_argument("--postprocess-metadata-train")
+    parser.add_argument("--postprocess-metadata-eval")
+    parser.add_argument("--postprocess-anchors-output")
+    parser.add_argument("--postprocess-report")
+    parser.add_argument("--postprocess-registry")
     return parser.parse_args()
+
+
+def resolve_postprocess_kwargs(
+    args: argparse.Namespace,
+    config: DinoV3TrainingConfig,
+) -> dict[str, Any] | None:
+    arg_values = {name: getattr(args, name) for name in POSTPROCESS_ARG_NAMES}
+    provided_names = [name for name, value in arg_values.items() if value]
+    if provided_names and len(provided_names) != len(arg_values):
+        missing_names = [name for name, value in arg_values.items() if not value]
+        raise SystemExit(
+            "Postprocess arguments must be provided together. "
+            f"Missing: {', '.join(missing_names)}"
+        )
+    if not provided_names:
+        return None
+    return {
+        "pairs_val": args.pairs_val,
+        "metadata_train": args.postprocess_metadata_train,
+        "metadata_eval": args.postprocess_metadata_eval,
+        "image_root": args.image_root,
+        "anchors_output": args.postprocess_anchors_output,
+        "report_output": args.postprocess_report,
+        "registry_output": args.postprocess_registry,
+        "batch_size": config.batch_size,
+        "num_workers": config.num_workers,
+        "prefetch_factor": config.prefetch_factor,
+        "persistent_workers": config.persistent_workers,
+        "device": args.device,
+        "precision": args.precision,
+    }
 
 
 def main() -> int:
@@ -119,7 +165,18 @@ def main() -> int:
         backbone_dtype=config.backbone_dtype,
     )
     trainer = DinoV3Trainer(model=model, config=config, resume_from=args.resume_from)
-    summary = trainer.train(train_loader, val_loader)
+    postprocess_kwargs = resolve_postprocess_kwargs(args, config)
+
+    def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> None:
+        if postprocess_kwargs is None:
+            return
+        run_postprocess_for_checkpoint(checkpoint_path=checkpoint_path, **postprocess_kwargs)
+
+    summary = trainer.train(
+        train_loader,
+        val_loader,
+        post_epoch_callback=postprocess_callback if postprocess_kwargs is not None else None,
+    )
 
     report_path = resolve_project_path(args.report) if args.report else Path(config.checkpoint_dir) / "training_summary.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -130,6 +187,11 @@ def main() -> int:
         "paths": {
             "best_checkpoint": str(checkpoint_dir / "best_model.pt"),
             "checkpoint_dir": str(checkpoint_dir),
+            "best_checkpoint_relative": project_relative_path(checkpoint_dir / "best_model.pt"),
+            "checkpoint_dir_relative": project_relative_path(checkpoint_dir),
+            "latest_completed_checkpoint_relative": project_relative_path(summary["latest_completed_checkpoint"])
+            if summary.get("latest_completed_checkpoint")
+            else None,
         },
     }
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

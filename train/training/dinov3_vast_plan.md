@@ -63,6 +63,8 @@
   - checkpoints: `train/checkpoints/dinov3_vitl16/`
   - reports: `train/reports/dinov3_vitl16_{smoke,full}.json`
   - anchors: `train/anchors/anchors.pt`
+- full 후처리 비교 결과는 `train/reports/dinov3_vit7b16_postprocess_registry.json`에 누적한다.
+- hourly checkpoint cleanup은 위 registry를 source of truth로 사용하고, checkpoint를 다시 평가하지 않는다.
 
 ## Vast.ai Runbook
 
