@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -51,6 +52,19 @@ async def test_model_bundle_requires_diagnosis_extras(tmp_path: Path) -> None:
         )
 
 
+class StubDownloadStorage:
+    async def download_tree(self, *, gcs_uri: str, destination_dir: str | Path) -> list[Path]:
+        def _write_partial_bundle() -> Path:
+            target_dir = Path(destination_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            target = target_dir / "encoder_fp32.onnx"
+            target.write_text("x", encoding="utf-8")
+            return target
+
+        target = await asyncio.to_thread(_write_partial_bundle)
+        return [target]
+
+
 def test_model_bundle_uses_default_encoder_thread_hint_when_top_level_hint_is_missing(
     tmp_path: Path,
 ) -> None:
@@ -97,6 +111,24 @@ async def test_gcs_download_tree_rejects_bucket_root_uri(tmp_path: Path) -> None
             gcs_uri="gs://mirip-v2-assets",
             destination_dir=tmp_path,
         )
+
+
+async def test_failed_remote_bundle_materialization_does_not_mark_cache_ready(
+    tmp_path: Path,
+) -> None:
+    model_uri = "gs://mirip-v2-assets/models/vitl"
+
+    with pytest.raises(FileNotFoundError):
+        await materialize_model_bundle(
+            model_uri=model_uri,
+            storage_service=StubDownloadStorage(),  # type: ignore[arg-type]
+            cache_dir=tmp_path,
+            require_diagnosis_extras=True,
+        )
+
+    local_dir, is_cached = _resolve_cached_bundle_dir(model_uri, tmp_path)
+    assert is_cached is False
+    assert not (local_dir / CACHE_READY_SENTINEL).exists()
 
 
 def test_bundle_cache_requires_ready_sentinel(tmp_path: Path) -> None:

@@ -60,9 +60,17 @@ class JobQueueService:
         )
         return await self.repository.update(updated)
 
-    async def mark_failed(self, job: DiagnosisJob, *, reason: str) -> DiagnosisJob:
+    async def mark_failed(
+        self,
+        job: DiagnosisJob,
+        *,
+        reason: str,
+        retryable: bool = True,
+    ) -> DiagnosisJob:
         next_status = (
-            JobStatus.FAILED if job.attempts >= self.settings.max_attempts else JobStatus.EXPIRED
+            JobStatus.FAILED
+            if not retryable or job.attempts >= self.settings.max_attempts
+            else JobStatus.EXPIRED
         )
         updated = replace(
             job,

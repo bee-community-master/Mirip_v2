@@ -145,3 +145,35 @@ async def test_create_diagnosis_job_records_vm_launch_metadata() -> None:
     assert job.metadata["launch_state"] == "launched"
     assert job.metadata["model_bundle_uri"] == "gs://mirip-v2-assets/models/vitl-cpu-bundle"
     assert job.metadata["target_job_id"] == job.id
+
+
+async def test_create_diagnosis_job_fails_fast_when_cpu_onnx_launcher_is_missing() -> None:
+    store = MemoryDocumentStore()
+    upload_repository = DocumentUploadRepository(store)
+    job_repository = DocumentDiagnosisJobRepository(store)
+    upload = UploadAsset(
+        id="upl-5",
+        user_id="user-123",
+        filename="piece.jpg",
+        content_type="image/jpeg",
+        size_bytes=2048,
+        object_name="users/user-123/diagnosis/upl-5/piece.jpg",
+        status=UploadStatus.UPLOADED,
+        created_at=utc_now(),
+    )
+    await upload_repository.create(upload)
+
+    usecase = CreateDiagnosisJobUseCase(
+        upload_repository,
+        job_repository,
+        vm_launcher=None,
+        worker_model_uri="gs://mirip-v2-assets/models/vitl-cpu-bundle",
+        worker_mode="cpu_onnx",
+    )
+    job = await usecase.execute(
+        actor=AuthenticatedUser(user_id="user-123"),
+        command=CreateDiagnosisJobCommand(upload_ids=["upl-5"], department="fine_art"),
+    )
+
+    assert job.status == JobStatus.FAILED
+    assert job.failure_reason == "Worker VM launcher is not configured"

@@ -11,7 +11,11 @@ import structlog
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 from mirip_backend.infrastructure.jobs.queue import JobQueueService
 from mirip_backend.worker.claim import claim_job, claim_next_job
-from mirip_backend.worker.inference.service import InferenceOutput, InferenceService
+from mirip_backend.worker.inference.service import (
+    InferenceOutput,
+    InferenceService,
+    NonRetryableInferenceError,
+)
 from mirip_backend.worker.result_writer import DiagnosisResultWriter
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +41,14 @@ class JobPoller:
             output, running_job = await self._evaluate_with_heartbeat(running_job)
             await self.result_writer.write_success(job=running_job, output=output)
             return await self.queue.mark_succeeded(running_job)
+        except NonRetryableInferenceError:
+            logger.exception("worker.job_failed_non_retryable", job_id=running_job.id)
+            await self.queue.mark_failed(
+                running_job,
+                reason="Internal model error",
+                retryable=False,
+            )
+            raise
         except Exception:
             logger.exception("worker.job_failed", job_id=running_job.id)
             await self.queue.mark_failed(running_job, reason="Worker execution failed")

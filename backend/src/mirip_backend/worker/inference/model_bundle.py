@@ -101,13 +101,20 @@ async def materialize_model_bundle(
     cache_dir: str | Path,
     require_diagnosis_extras: bool,
 ) -> MaterializedModelBundle:
-    local_dir = await _resolve_local_bundle_dir(
+    local_dir, downloaded_remote = await _resolve_local_bundle_dir(
         model_uri=model_uri,
         storage_service=storage_service,
         cache_dir=cache_dir,
     )
-    manifest = ModelBundleManifest.load(local_dir)
-    manifest.validate(local_dir, require_diagnosis_extras=require_diagnosis_extras)
+    try:
+        manifest = ModelBundleManifest.load(local_dir)
+        manifest.validate(local_dir, require_diagnosis_extras=require_diagnosis_extras)
+    except Exception:
+        if downloaded_remote:
+            await asyncio.to_thread(_reset_bundle_cache_dir, local_dir)
+        raise
+    if downloaded_remote:
+        await asyncio.to_thread(_mark_bundle_cache_ready, local_dir)
     return MaterializedModelBundle(model_uri=model_uri, local_dir=local_dir, manifest=manifest)
 
 
@@ -116,18 +123,17 @@ async def _resolve_local_bundle_dir(
     model_uri: str,
     storage_service: GCSStorageService,
     cache_dir: str | Path,
-) -> Path:
+) -> tuple[Path, bool]:
     candidate = await asyncio.to_thread(_resolve_existing_local_bundle_dir, model_uri)
     if candidate is not None:
-        return candidate
+        return candidate, False
 
     local_dir, is_cached = await asyncio.to_thread(_resolve_cached_bundle_dir, model_uri, cache_dir)
     if is_cached:
-        return local_dir
+        return local_dir, False
     await asyncio.to_thread(_reset_bundle_cache_dir, local_dir)
     await storage_service.download_tree(gcs_uri=model_uri, destination_dir=local_dir)
-    await asyncio.to_thread(_mark_bundle_cache_ready, local_dir)
-    return local_dir
+    return local_dir, True
 
 
 def _resolve_existing_local_bundle_dir(model_uri: str) -> Path | None:

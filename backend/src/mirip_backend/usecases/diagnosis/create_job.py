@@ -88,7 +88,18 @@ class CreateDiagnosisJobUseCase:
         return await self._launch_worker_vm(created)
 
     async def _launch_worker_vm(self, job: DiagnosisJob) -> DiagnosisJob:
-        if self._vm_launcher is None or self._worker_mode == "stub":
+        if self._worker_mode == "stub":
+            return job
+        if self._vm_launcher is None:
+            if self._worker_mode == "cpu_onnx":
+                return await self._job_repository.update(
+                    replace(
+                        job,
+                        status=JobStatus.FAILED,
+                        failure_reason="Worker VM launcher is not configured",
+                        updated_at=utc_now(),
+                    )
+                )
             return job
         if not self._worker_model_uri:
             return await self._job_repository.update(

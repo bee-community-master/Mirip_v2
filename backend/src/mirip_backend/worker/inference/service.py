@@ -27,6 +27,10 @@ class InferenceService(Protocol):
     async def evaluate(self, job: DiagnosisJob) -> InferenceOutput: ...
 
 
+class NonRetryableInferenceError(RuntimeError):
+    """Raised when worker inference cannot succeed on a retry."""
+
+
 class WorkerInferenceService:
     """Worker inference service for stub and CPU ONNX runtimes."""
 
@@ -53,16 +57,23 @@ class WorkerInferenceService:
             self._loaded = True
             return
         if self._mode != "cpu_onnx":
-            raise RuntimeError(f"Unsupported worker mode: {self._mode}")
+            raise NonRetryableInferenceError(f"Unsupported worker mode: {self._mode}")
         if not self._model_uri:
-            raise RuntimeError("cpu_onnx worker mode requires MIRIP_WORKER__MODEL_URI")
-        self._bundle = await materialize_model_bundle(
-            model_uri=self._model_uri,
-            storage_service=self._storage_service,
-            cache_dir=self._local_model_cache_dir,
-            require_diagnosis_extras=True,
-        )
-        self._session = self._build_onnx_session(self._bundle)
+            raise NonRetryableInferenceError(
+                "cpu_onnx worker mode requires MIRIP_WORKER__MODEL_URI"
+            )
+        try:
+            self._bundle = await materialize_model_bundle(
+                model_uri=self._model_uri,
+                storage_service=self._storage_service,
+                cache_dir=self._local_model_cache_dir,
+                require_diagnosis_extras=True,
+            )
+            self._session = self._build_onnx_session(self._bundle)
+        except NonRetryableInferenceError:
+            raise
+        except Exception as exc:
+            raise NonRetryableInferenceError("CPU ONNX model bundle initialization failed") from exc
         self._loaded = True
 
     @staticmethod
@@ -129,8 +140,8 @@ class WorkerInferenceService:
         if self._mode == "stub":
             return self._build_stub_output(job)
         if self._session is None or self._bundle is None:
-            raise RuntimeError("CPU ONNX runtime failed to initialize")
-        raise RuntimeError(
+            raise NonRetryableInferenceError("CPU ONNX runtime failed to initialize")
+        raise NonRetryableInferenceError(
             "CPU ONNX runtime loaded the serving bundle and initialized the encoder session, "
             "but diagnosis-head execution is not implemented yet. Production cutover should "
             "remain blocked until the diagnosis artifact contract is finalized."
