@@ -8,6 +8,9 @@ The repository is organized so each area can evolve independently while still sh
 - `frontend/` contains the SvelteKit mock application used to validate the Mirip v2 UX flows.
 - The mock currently covers the home, diagnosis, competitions, and portfolio screens with local fixtures and reusable UI components.
 - Run the standard frontend scripts from `frontend/`: `npm run check`, `npm run test`, and `npm run build`.
+- For diagnosis API integration, create `frontend/.env` from `frontend/.env.example` and set
+  `PUBLIC_MIRIP_API_BASE_URL` to the backend base URL. The default local value is
+  `http://localhost:8000`.
 
 ## Backend
 
@@ -19,6 +22,32 @@ The backend scaffold is designed for:
 - Spot GPU VM workers for heavyweight inference jobs
 
 See [BACKEND_V2_PLAN.md](./BACKEND_V2_PLAN.md) for the implementation plan and [backend/README.md](./backend/README.md) for local backend commands.
+
+## Local Diagnosis Flow
+
+Run the diagnosis slice locally with three processes:
+
+```bash
+cd backend
+cp .env.example .env
+uv sync --group dev
+uv run uvicorn mirip_backend.api.app:create_app --factory --host 0.0.0.0 --port 8000 --reload
+```
+
+```bash
+cd backend
+uv run python -m mirip_backend.worker.main
+```
+
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+The frontend diagnosis screen talks directly to the backend API, creates upload sessions, completes
+uploads, creates diagnosis jobs, and polls for worker results.
 
 ## Training
 
