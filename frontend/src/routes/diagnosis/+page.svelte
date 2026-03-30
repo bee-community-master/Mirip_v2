@@ -1,86 +1,61 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
 	import { onDestroy } from 'svelte';
 	import {
 		AlertCircle,
-		BookOpen,
 		CheckCircle2,
-		GraduationCap,
-		Lock,
+		LoaderCircle,
+		RefreshCcw,
 		Sparkles,
 		TrendingUp,
 		Upload
 	} from 'lucide-svelte';
+
+	import {
+		completeUpload,
+		createDiagnosisJob,
+		createUploadSession,
+		getDiagnosisJobStatus,
+		isFakeUploadMode,
+		uploadToSignedUrl
+	} from '$lib/api/diagnosis';
+	import type { DiagnosisJobDto } from '$lib/api/types';
 	import GlassCard from '$lib/components/GlassCard.svelte';
 	import RadarChart from '$lib/components/RadarChart.svelte';
 	import SectionHeading from '$lib/components/SectionHeading.svelte';
-	import { diagnosisMock } from '$lib/mocks/diagnosis';
-	import type { ExpertTab, TierKey, UniversityKey } from '$lib/types';
-	import { buildPathWithQuery, readQueryOption } from '$lib/utils/query';
+	import { mapDiagnosisResult } from '$lib/diagnosis/adapter';
+	import { transitionDiagnosisStage, type DiagnosisStage } from '$lib/diagnosis/flow';
+	import {
+		buildDefaultDiagnosisJobRequest,
+		diagnosisPollIntervalInMs,
+		getDiagnosisFailureMessage,
+		getDiagnosisJobStatusLabel,
+		validateDiagnosisFile
+	} from '$lib/diagnosis/logic';
+	import type { DiagnosisResultView } from '$lib/diagnosis/types';
 
-	const tierOptions = ['FREE', 'STANDARD', 'PRO'] as const;
-	const universityOptions = ['HONGIK', 'KONKUK', 'KOOKMIN'] as const;
-	const expertOptions = ['AI', 'INSTRUCTOR', 'PROFESSOR'] as const;
-	const positioningGrades = ['S', 'A', 'B', 'C'] as const;
-	const validImageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
-	const maxUploadSizeInBytes = 10 * 1024 * 1024;
-	const expertGuideTabs = [
-		{ id: 'AI', icon: Sparkles, label: 'AI 분석' },
-		{ id: 'INSTRUCTOR', icon: BookOpen, label: '입시 강사 의견' },
-		{ id: 'PROFESSOR', icon: GraduationCap, label: '교수 의견' }
-	] as const satisfies ReadonlyArray<{
-		id: ExpertTab;
-		icon: typeof Sparkles;
-		label: string;
-	}>;
-	const universityTabs = universityOptions.map((key) => ({
-		key,
-		label: diagnosisMock.universities[key].label
-	})) satisfies ReadonlyArray<{
-		key: UniversityKey;
-		label: string;
-	}>;
-	const tierOrder: Record<TierKey, number> = {
-		FREE: 0,
-		STANDARD: 1,
-		PRO: 2
-	};
-
-	type Stage = 'upload' | 'analyzing' | 'result';
-
-	let stage = $state<Stage>('upload');
+	let stage = $state<DiagnosisStage>('upload');
 	let selectedFile = $state<File | null>(null);
 	let previewUrl = $state<string | null>(null);
+	let diagnosisResult = $state<DiagnosisResultView | null>(null);
+	let currentJob = $state<DiagnosisJobDto | null>(null);
 	let error = $state('');
 	let isDragging = $state(false);
-	let analyzingTimer: ReturnType<typeof setTimeout> | null = null;
+	let statusMessage = $state('');
+	let pollCount = $state(0);
+	let pollTimer: ReturnType<typeof setTimeout> | null = null;
+	let activeRunId = 0;
+	let isDestroyed = false;
+	const diagnosisUpdatedAtFormatter = new Intl.DateTimeFormat('ko-KR', {
+		dateStyle: 'medium',
+		timeStyle: 'short'
+	});
 
-	const tier = $derived(readQueryOption(page.url.searchParams, 'tier', tierOptions, 'FREE'));
-	const universityKey = $derived(
-		readQueryOption(page.url.searchParams, 'uni', universityOptions, 'HONGIK')
+	const currentTier = $derived(diagnosisResult?.tier ?? null);
+	const topProbability = $derived(diagnosisResult?.probabilities[0] ?? null);
+	const formattedUpdatedAt = $derived(
+		currentJob ? diagnosisUpdatedAtFormatter.format(new Date(currentJob.updated_at)) : null
 	);
-	const expertTab = $derived(
-		readQueryOption(page.url.searchParams, 'expert', expertOptions, 'AI')
-	);
-
-	const selectedUniversity = $derived(diagnosisMock.universities[universityKey]);
-	const standardUnlocked = $derived(tierOrder[tier] >= tierOrder.STANDARD);
-	const proUnlocked = $derived(tierOrder[tier] >= tierOrder.PRO);
-
-	function updateQuery(next: { tier?: TierKey; uni?: UniversityKey; expert?: ExpertTab }) {
-		const nextPath = buildPathWithQuery(page.url.pathname, page.url.searchParams, {
-			tier: next.tier === 'FREE' ? null : next.tier,
-			uni: next.uni === 'HONGIK' ? null : next.uni,
-			expert: next.expert === 'AI' ? null : next.expert
-		});
-
-		void goto(nextPath, {
-			replaceState: true,
-			noScroll: true,
-			keepFocus: true
-		});
-	}
+	const workerHintVisible = $derived(stage === 'analyzing' && pollCount >= 3);
 
 	function clearPreview() {
 		if (previewUrl) {
@@ -89,53 +64,165 @@
 		}
 	}
 
-	function selectTier(nextTier: TierKey) {
-		updateQuery({ tier: nextTier });
-	}
-
-	function selectUniversity(nextUniversity: UniversityKey) {
-		updateQuery({ uni: nextUniversity });
-	}
-
-	function selectExpertGuide(nextExpert: ExpertTab) {
-		updateQuery({ expert: nextExpert });
-	}
-
-	function clearTimer() {
-		if (analyzingTimer) {
-			clearTimeout(analyzingTimer);
-			analyzingTimer = null;
+	function clearPollingTimer() {
+		if (pollTimer) {
+			clearTimeout(pollTimer);
+			pollTimer = null;
 		}
 	}
 
-	function beginAnalysis(file: File) {
-		if (!validImageTypes.includes(file.type)) {
-			error = 'PNG, JPG, JPEG, WebP 형식의 이미지만 업로드할 수 있습니다.';
-			return;
-		}
+	function invalidateCurrentRun() {
+		activeRunId += 1;
+		clearPollingTimer();
+	}
 
-		if (file.size > maxUploadSizeInBytes) {
-			error = '파일 크기는 10 MB 이하로 올려주세요.';
-			return;
-		}
-
-		clearTimer();
-		clearPreview();
-
+	function resetDiagnosisState() {
+		stage = 'upload';
+		selectedFile = null;
+		diagnosisResult = null;
+		currentJob = null;
 		error = '';
-		selectedFile = file;
-		previewUrl = URL.createObjectURL(file);
-		stage = 'analyzing';
+		statusMessage = '';
+		pollCount = 0;
+		isDragging = false;
+	}
 
-		analyzingTimer = setTimeout(() => {
-			stage = 'result';
-		}, 2200);
+	function isRunActive(runId: number) {
+		return !isDestroyed && runId === activeRunId;
+	}
+
+	function resetDiagnosis() {
+		invalidateCurrentRun();
+		clearPreview();
+		resetDiagnosisState();
+	}
+
+	function extractErrorMessage(value: unknown) {
+		if (value instanceof Error) {
+			return value.message;
+		}
+
+		return '진단 요청 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.';
+	}
+
+	async function pollDiagnosisJob(jobId: string, runId: number) {
+		clearPollingTimer();
+
+		try {
+			const response = await getDiagnosisJobStatus(jobId);
+
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			currentJob = response.job;
+			pollCount += 1;
+			stage = transitionDiagnosisStage(stage, {
+				type: 'job_polled',
+				jobStatus: response.job.status,
+				hasResult: response.result !== null
+			});
+
+			if (response.job.status === 'succeeded' && response.result) {
+				diagnosisResult = mapDiagnosisResult(response.result);
+				statusMessage = '';
+				return;
+			}
+
+			if (response.job.status === 'failed' || response.job.status === 'expired') {
+				error = getDiagnosisFailureMessage(response.job);
+				statusMessage = '';
+				return;
+			}
+
+			statusMessage = `${getDiagnosisJobStatusLabel(response.job.status)} 상태입니다. 결과가 준비되면 자동으로 갱신됩니다.`;
+			pollTimer = setTimeout(() => {
+				void pollDiagnosisJob(jobId, runId);
+			}, diagnosisPollIntervalInMs);
+		} catch (caughtError) {
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			stage = transitionDiagnosisStage(stage, { type: 'request_failed' });
+			error = extractErrorMessage(caughtError);
+			statusMessage = '';
+		}
+	}
+
+	async function beginAnalysis(file: File) {
+		try {
+			validateDiagnosisFile(file);
+		} catch (caughtError) {
+			error = extractErrorMessage(caughtError);
+			stage = 'upload';
+			return;
+		}
+
+		let runId = 0;
+
+		try {
+			invalidateCurrentRun();
+			clearPreview();
+			resetDiagnosisState();
+			runId = activeRunId;
+			error = '';
+			selectedFile = file;
+			previewUrl = URL.createObjectURL(file);
+			stage = transitionDiagnosisStage(stage, { type: 'upload_started' });
+			statusMessage = '업로드 세션을 준비하고 있습니다.';
+
+			const uploadResponse = await createUploadSession(file);
+
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			if (!isFakeUploadMode(uploadResponse.data.session, uploadResponse.headers)) {
+				statusMessage = '이미지를 업로드하고 있습니다.';
+				await uploadToSignedUrl(uploadResponse.data.session, file);
+			}
+
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			statusMessage = '업로드를 확정하고 진단 작업을 생성하고 있습니다.';
+			const completedUpload = await completeUpload(uploadResponse.data.upload.id);
+
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			const job = await createDiagnosisJob(buildDefaultDiagnosisJobRequest(completedUpload.upload.id));
+
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			currentJob = job;
+			pollCount = 0;
+			statusMessage = '진단 작업이 접수되었습니다. 결과를 확인하는 중입니다.';
+			await pollDiagnosisJob(job.id, runId);
+		} catch (caughtError) {
+			if (!isRunActive(runId)) {
+				return;
+			}
+
+			stage = transitionDiagnosisStage(stage, { type: 'request_failed' });
+			error = extractErrorMessage(caughtError);
+			statusMessage = '';
+		}
 	}
 
 	function handleInputChange(event: Event) {
 		const target = event.currentTarget as HTMLInputElement;
 		const file = target.files?.[0];
-		if (file) beginAnalysis(file);
+
+		if (file) {
+			void beginAnalysis(file);
+		}
+
 		target.value = '';
 	}
 
@@ -144,20 +231,15 @@
 		isDragging = false;
 
 		const file = event.dataTransfer?.files?.[0];
-		if (file) beginAnalysis(file);
-	}
 
-	function resetDiagnosis() {
-		clearTimer();
-		clearPreview();
-		error = '';
-		selectedFile = null;
-		stage = 'upload';
-		updateQuery({ tier: 'FREE', uni: 'HONGIK', expert: 'AI' });
+		if (file) {
+			void beginAnalysis(file);
+		}
 	}
 
 	onDestroy(() => {
-		clearTimer();
+		isDestroyed = true;
+		invalidateCurrentRun();
 		clearPreview();
 	});
 </script>
@@ -166,7 +248,7 @@
 	<title>Diagnosis | MIRIP v2</title>
 	<meta
 		name="description"
-		content="업로드부터 결과, 대학 탭, 전문가 탭, 잠금 해제 상태까지 mock 데이터로 동작하는 MIRIP AI 진단 화면입니다."
+		content="업로드한 작품을 실제 Mirip v2 backend diagnosis API에 연결해 결과를 확인하는 화면입니다."
 	/>
 </svelte:head>
 
@@ -174,15 +256,15 @@
 	<div class="mx-auto flex max-w-6xl flex-col gap-10">
 		<SectionHeading
 			badge="AI Diagnosis"
-			title="작품을 업로드하고 대학별 합격 가능성을 확인하세요"
-			subtitle="실제 API 없이도 업로드, 분석 상태, 결과, 티어 전환, 대학/전문가 탭을 모두 로컬 상태와 fixture로 재현합니다."
+			title="작품을 업로드하고 현재 진단 결과를 확인하세요"
+			subtitle="frontend가 backend upload, diagnosis job, worker polling 흐름에 직접 연결되어 있습니다."
 			center={true}
 			level="h1"
 		/>
 
 		{#if error}
 			<div
-				class="mx-auto flex w-full max-w-2xl items-start gap-3 rounded-[24px] border border-rose-400/20 bg-rose-500/10 px-5 py-4 text-sm font-medium text-rose-100"
+				class="mx-auto flex w-full max-w-3xl items-start gap-3 rounded-[24px] border border-rose-400/20 bg-rose-500/10 px-5 py-4 text-sm font-medium text-rose-100"
 				aria-live="polite"
 			>
 				<AlertCircle class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
@@ -216,428 +298,279 @@
 				<h2 class="font-display text-3xl font-bold tracking-[-0.04em] text-white">
 					클릭하거나 이미지를 드래그하세요
 				</h2>
-				<p class="soft-text mt-3 max-w-md">PNG, JPG, JPEG, WebP, 최대 10 MB까지 지원합니다.</p>
+				<p class="soft-text mt-3 max-w-md">PNG, JPG, JPEG, WebP, 최대 10 MB까지 지원합니다.</p>
 			</label>
 		{:else if stage === 'analyzing'}
-			<div class="mx-auto flex flex-col items-center justify-center py-16" aria-live="polite">
-				<div class="relative mb-8 size-32">
-					<div class="absolute inset-0 rounded-full border-4 border-white/10"></div>
-					<div
-						class="absolute inset-0 rounded-full border-4 border-fuchsia-500 border-t-transparent"
-						style="animation: spin 1.8s linear infinite;"
-					></div>
-					<div class="absolute inset-0 flex items-center justify-center">
-						<Sparkles class="size-8 text-fuchsia-300" aria-hidden="true" />
-					</div>
-				</div>
+			<div class="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+				<GlassCard className="rounded-[30px] p-8">
+					<div class="flex flex-col items-center justify-center py-8 text-center">
+						<div class="relative mb-8 flex size-28 items-center justify-center rounded-full border border-white/10 bg-night-900/70">
+							<LoaderCircle
+								class="size-12 animate-spin text-fuchsia-300"
+								aria-hidden="true"
+							/>
+						</div>
+						<h2 class="font-display text-3xl font-bold tracking-[-0.05em] text-white">
+							DINOv2 AI 분석 중
+						</h2>
+						<p class="soft-text mt-3 max-w-xl">
+							{statusMessage || '업로드와 진단 요청을 처리하고 있습니다.'}
+						</p>
 
-				<h2 class="font-display text-3xl font-bold tracking-[-0.05em] text-white">
-					DINOv2 AI 분석 중…
-				</h2>
-				<p class="soft-text mt-3">
-					수만 개의 합격작 데이터와 업로드한 작품을 대조하고 있습니다.
-				</p>
-			</div>
-		{:else}
-			<div class="flex flex-col gap-12">
-				<div class="sticky top-20 z-30 flex justify-center">
-					<div class="glass-panel no-scrollbar flex items-center gap-2 overflow-x-auto rounded-full px-3 py-2">
-						<span class="px-3 text-[11px] font-black uppercase tracking-[0.24em] text-white/35">Demo</span>
-						{#each tierOptions as option}
-							<button
-								type="button"
-								class={`rounded-full px-4 py-2 text-sm font-bold transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300 ${
-									tier === option ? 'bg-white text-black' : 'text-white/52 hover:bg-white/6 hover:text-white'
-								}`}
-								aria-pressed={tier === option}
-								onclick={() => {
-									selectTier(option);
-								}}
-							>
-								{option}
-							</button>
-						{/each}
-					</div>
-				</div>
-
-				<section class="space-y-6">
-					<div class="flex flex-wrap items-center gap-3">
-						<span class="rounded-full border border-white/10 bg-white/6 px-3 py-1 text-xs font-black text-white/75">FREE</span>
-						<h2 class="font-display text-3xl font-black tracking-[-0.05em] text-white">작품 진단 결과</h2>
-					</div>
-
-					<div class="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
-						<GlassCard className="rounded-[30px] p-7 sm:p-8">
-							<div class="grid gap-6 xl:grid-cols-[1fr_240px] xl:items-center">
-								<div class="flex flex-col gap-5">
-									<div class="h-[320px]">
-										<RadarChart data={diagnosisMock.radar} />
+						{#if currentJob}
+							<div class="mt-8 grid w-full gap-3 text-left sm:grid-cols-2">
+								<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+									<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">Job ID</div>
+									<div class="mt-2 break-all text-sm font-medium text-white/78">{currentJob.id}</div>
+								</div>
+								<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+									<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">Status</div>
+									<div class="mt-2 text-sm font-medium text-white/78">
+										{getDiagnosisJobStatusLabel(currentJob.status)}
 									</div>
-									<div>
-										<div class="flex h-8 overflow-hidden rounded-full text-[11px] font-black">
-											{#each diagnosisMock.tierResult.segments as segment}
-												<div
-													class={`flex items-center justify-center ${segment.fillClass} ${segment.textClass}`}
-													style={`flex: ${segment.value};`}
-												>
-													{segment.label}
-												</div>
-											{/each}
-										</div>
-										<p class="mt-4 text-center text-sm font-medium text-white/60">
-											<span class="font-bold text-white">{diagnosisMock.tierResult.predictedGrade}등급</span>
-											확률 {diagnosisMock.tierResult.probability}% · 신뢰구간 ±1등급 내 적중률
-											<span class="font-bold text-white">{diagnosisMock.tierResult.confidence}%</span>
-										</p>
+								</div>
+							</div>
+						{/if}
+
+						{#if workerHintVisible}
+							<div class="mt-8 w-full rounded-[24px] border border-amber-400/20 bg-amber-500/10 p-4 text-left text-sm text-amber-100">
+								<div class="font-semibold">로컬 worker를 아직 실행하지 않았다면 현재 상태가 계속 유지됩니다.</div>
+								<p class="mt-2 text-amber-100/80">
+									backend에서 `uv run python -m mirip_backend.worker.main` 또는 worker 실행 스크립트를
+									별도 프로세스로 띄워 주세요.
+								</p>
+							</div>
+						{/if}
+					</div>
+				</GlassCard>
+
+				<GlassCard className="rounded-[30px] p-7 sm:p-8">
+					<div class="mb-4 flex items-center justify-between">
+						<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">Uploaded</h3>
+						<span class="rounded-full bg-fuchsia-500/16 px-3 py-1 text-xs font-bold text-fuchsia-200">
+							Processing
+						</span>
+					</div>
+
+					<div class="overflow-hidden rounded-[24px] border border-white/8">
+						<img
+							src={previewUrl ?? 'https://images.unsplash.com/photo-1593472807861-5bb884af28f6?q=80&w=800&auto=format&fit=crop'}
+							alt="업로드한 작품 미리보기"
+							width="900"
+							height="1100"
+							class="aspect-[4/5] w-full object-cover"
+						/>
+					</div>
+
+					{#if selectedFile}
+						<div class="mt-4 rounded-[22px] border border-white/8 bg-white/[0.03] p-4 text-sm text-white/72">
+							<div class="font-semibold text-white">{selectedFile.name}</div>
+							<div class="mt-1 text-white/52">
+								{Math.round(selectedFile.size / 1024)} KB · {selectedFile.type}
+							</div>
+						</div>
+					{/if}
+				</GlassCard>
+			</div>
+		{:else if stage === 'result' && diagnosisResult}
+			<div class="flex flex-col gap-10">
+				<div class="grid gap-6 lg:grid-cols-[1.08fr_0.92fr]">
+					<GlassCard className="rounded-[30px] p-7 sm:p-8">
+						<div class="grid gap-8 xl:grid-cols-[1fr_280px] xl:items-center">
+							<div>
+								<div class="h-[320px]">
+									<RadarChart data={diagnosisResult.radarPoints} />
+								</div>
+							</div>
+
+							<div class="space-y-4 rounded-[28px] border border-white/8 bg-night-900/70 p-5">
+								<div>
+									<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">
+										Predicted Tier
+									</div>
+									<div class="mt-2 font-display text-5xl font-black tracking-[-0.08em] text-white">
+										{currentTier}
 									</div>
 								</div>
 
-								<div class="rounded-[28px] border border-white/8 bg-night-900/70 p-5">
-									<div class="mb-4 flex items-center justify-between">
-										<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">
-											Uploaded
-										</h3>
-										<span class="rounded-full bg-fuchsia-500/16 px-3 py-1 text-xs font-bold text-fuchsia-200">
-											{selectedFile?.name ? 'Mock Ready' : 'Sample'}
-										</span>
+								{#if topProbability}
+									<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+										<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">
+											Top Match
+										</div>
+										<div class="mt-2 text-lg font-semibold text-white">
+											{topProbability.university}
+										</div>
+										<p class="mt-1 text-sm text-white/55">{topProbability.department}</p>
+										<div class="mt-3 inline-flex rounded-full bg-fuchsia-500/14 px-3 py-1 text-sm font-bold text-fuchsia-200">
+											{topProbability.percentLabel}
+										</div>
 									</div>
-									<div class="overflow-hidden rounded-[24px] border border-white/8">
+								{/if}
+
+								<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+									<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">
+										Last Updated
+									</div>
+									<div class="mt-2 text-sm font-medium text-white/72">
+										{formattedUpdatedAt ?? '-'}
+									</div>
+								</div>
+
+								<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
+									<div class="mb-3 text-xs font-bold uppercase tracking-[0.24em] text-white/35">
+										Uploaded Preview
+									</div>
+									<div class="overflow-hidden rounded-[18px] border border-white/8">
 										<img
 											src={previewUrl ?? 'https://images.unsplash.com/photo-1593472807861-5bb884af28f6?q=80&w=800&auto=format&fit=crop'}
-											alt="업로드한 작품 미리보기"
-											width="900"
-											height="1100"
+											alt="진단에 사용한 업로드 이미지"
+											width="800"
+											height="1000"
 											class="aspect-[4/5] w-full object-cover"
 										/>
 									</div>
-									<p class="soft-text mt-4">
-										현재 업로드한 이미지를 기준으로 분석한 mock 결과입니다. 파일을 다시 올리면 상태가 처음부터 다시 시작됩니다.
-									</p>
+									{#if selectedFile}
+										<div class="mt-3 text-xs text-white/52">
+											{selectedFile.name} · {Math.round(selectedFile.size / 1024)} KB
+										</div>
+									{/if}
 								</div>
 							</div>
+						</div>
+					</GlassCard>
+
+					<GlassCard className="rounded-[30px] p-7 sm:p-8">
+						<div class="flex items-center gap-3">
+							<div class="flex size-12 items-center justify-center rounded-2xl bg-fuchsia-500/12 text-fuchsia-200">
+								<Sparkles class="size-6" aria-hidden="true" />
+							</div>
+							<div>
+								<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">Diagnosis Summary</h3>
+								<p class="text-sm text-white/45">backend worker가 생성한 실제 결과 요약입니다.</p>
+							</div>
+						</div>
+
+						<div class="mt-6 space-y-4">
+							<div class="rounded-[24px] border border-white/8 bg-white/[0.03] p-5">
+								<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">Summary</div>
+								<p class="soft-text mt-3">
+									{diagnosisResult.summary ?? '요약 문구가 아직 제공되지 않았습니다.'}
+								</p>
+							</div>
+
+							<div class="rounded-[24px] border border-white/8 bg-white/[0.03] p-5">
+								<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">Overall Feedback</div>
+								<p class="soft-text mt-3">
+									{diagnosisResult.feedback.overall ?? '세부 피드백 없이 기본 점수와 확률 결과만 제공되었습니다.'}
+								</p>
+							</div>
+
+							<button
+								type="button"
+								class="inline-flex w-full items-center justify-center gap-2 rounded-full bg-white px-5 py-3 font-semibold text-black transition-transform duration-200 hover:scale-[1.02]"
+								onclick={resetDiagnosis}
+							>
+								<RefreshCcw class="size-4" aria-hidden="true" />
+								새 작품 다시 진단하기
+							</button>
+						</div>
+					</GlassCard>
+				</div>
+
+				<div class="grid gap-6 lg:grid-cols-[1.05fr_0.95fr]">
+					<GlassCard className="rounded-[30px] p-7 sm:p-8">
+						<h3 class="inline-flex items-center gap-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+							<TrendingUp class="size-5 text-fuchsia-300" aria-hidden="true" />
+							대학교/학과별 확률
+						</h3>
+
+						<div class="mt-6 space-y-4">
+							{#if diagnosisResult.probabilities.length}
+								{#each diagnosisResult.probabilities as probability}
+									<div class="rounded-[24px] border border-white/8 bg-white/[0.03] p-5">
+										<div class="flex flex-wrap items-start justify-between gap-4">
+											<div>
+												<h4 class="text-lg font-semibold text-white">{probability.university}</h4>
+												<p class="mt-1 text-sm text-white/52">{probability.department}</p>
+											</div>
+											<div class="rounded-full bg-fuchsia-500/14 px-3 py-1 text-sm font-bold text-fuchsia-200">
+												{probability.percentLabel}
+											</div>
+										</div>
+										<div class="mt-4 h-3 overflow-hidden rounded-full bg-white/8">
+											<div
+												class="h-full rounded-full bg-gradient-to-r from-fuchsia-400 to-azure-450"
+												style={`width: ${probability.percentLabel};`}
+											></div>
+										</div>
+									</div>
+								{/each}
+							{:else}
+								<div class="rounded-[24px] border border-white/8 bg-white/[0.03] p-5 text-sm text-white/60">
+									backend가 확률 항목을 반환하지 않았습니다.
+								</div>
+							{/if}
+						</div>
+					</GlassCard>
+
+					<div class="space-y-6">
+						<GlassCard className="rounded-[30px] p-7 sm:p-8">
+							<div class="mb-4 flex items-center gap-2 text-lg font-black text-blue-200">
+								<CheckCircle2 class="size-5" aria-hidden="true" />
+								강점
+							</div>
+							{#if diagnosisResult.feedback.strengths.length}
+								<ul class="space-y-3">
+									{#each diagnosisResult.feedback.strengths as item}
+										<li class="soft-text flex gap-3">
+											<span class="mt-2 size-1.5 rounded-full bg-blue-200" aria-hidden="true"></span>
+											<span>{item}</span>
+										</li>
+									{/each}
+								</ul>
+							{:else}
+								<p class="soft-text">현재 결과에는 강점 항목이 포함되지 않았습니다.</p>
+							{/if}
 						</GlassCard>
 
 						<GlassCard className="rounded-[30px] p-7 sm:p-8">
-							<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">전체 포지셔닝</h3>
-							<div class="relative mt-6 min-h-[320px] overflow-hidden rounded-[28px] border border-white/8 bg-night-900/70">
-								<div class="absolute left-1/2 top-10 bottom-10 w-px -translate-x-1/2 bg-gradient-to-b from-gold-350 via-white/60 to-azure-450"></div>
-								{#each positioningGrades as grade, index}
-									<div
-										class="absolute left-1/2 -translate-x-1/2"
-										style={`top: ${12 + index * 26}%`}
-									>
-										<div
-											class={`flex size-10 items-center justify-center rounded-full font-black ${
-												grade === 'S'
-													? 'bg-yellow-400 text-black'
-													: grade === 'A'
-														? 'bg-white text-black'
-														: grade === 'B'
-															? 'bg-orange-500 text-white'
-															: 'bg-blue-600 text-white'
-											}`}
-										>
-											{grade}
-										</div>
-									</div>
-								{/each}
-
-								<div class="absolute left-1/2 top-[44%] ml-8 flex items-center gap-3">
-									<div class="relative flex size-6 items-center justify-center">
-										<div class="absolute size-6 rounded-full bg-fuchsia-400/45 animate-pulse-ring"></div>
-										<div class="size-3 rounded-full bg-fuchsia-400"></div>
-									</div>
-									<span class="rounded bg-fuchsia-500 px-2 py-1 text-xs font-black text-white">YOU</span>
-								</div>
+							<div class="mb-4 flex items-center gap-2 text-lg font-black text-orange-200">
+								<AlertCircle class="size-5" aria-hidden="true" />
+								보완점
 							</div>
-						</GlassCard>
-					</div>
-				</section>
-
-				<section class="relative space-y-6 border-t border-white/8 pt-10">
-					<div class="flex flex-wrap items-center gap-3">
-						<span class="rounded-full border border-yellow-400/20 bg-yellow-500/10 px-3 py-1 text-xs font-black text-yellow-300">
-							STANDARD
-						</span>
-						<span class="text-sm font-bold text-white/42">$20 / 1회</span>
-					</div>
-					<h2 class="font-display text-3xl font-black tracking-[-0.05em] text-white">가장 가까운 대학은?</h2>
-
-					<div class="relative">
-						<div
-							class={`grid gap-6 md:grid-cols-3 ${!standardUnlocked ? 'pointer-events-none select-none blur-sm opacity-35' : ''}`}
-						>
-							{#each diagnosisMock.standardMatches as match}
-								<GlassCard className="rounded-[28px] p-6">
-									<div class="flex items-start justify-between gap-4">
-										<h3 class="min-w-0 font-display text-2xl font-bold leading-tight tracking-[-0.04em] text-white">
-											{match.name}
-										</h3>
-										<span class="font-display text-3xl font-black tracking-[-0.05em] text-fuchsia-300">
-											{match.match}%
-										</span>
-									</div>
-									<div class="mt-6 space-y-2 text-sm font-medium text-white/58">
-										<div class="flex justify-between"><span>지원자</span><span class="text-white">{match.applicants}</span></div>
-										<div class="flex justify-between"><span>경쟁률</span><span class="text-white">{match.ratio}</span></div>
-										<div class="flex justify-between"><span>실기 예상</span><span class="text-white">상위 {match.rank}</span></div>
-									</div>
-								</GlassCard>
-							{/each}
-						</div>
-
-						{#if !standardUnlocked}
-							<div class="absolute inset-0 z-10 flex items-center justify-center">
-								<div class="glass-panel rounded-[32px] px-7 py-6 text-center">
-									<Lock class="mx-auto size-7 text-white/60" aria-hidden="true" />
-									<p class="mt-4 text-base font-semibold text-white">
-										Standard 이상에서 대학 매칭을 확인할 수 있습니다.
-									</p>
-									<button
-										type="button"
-										class="mt-5 rounded-full bg-white px-6 py-3 font-semibold text-black transition-transform duration-200 hover:scale-[1.02]"
-										onclick={() => {
-											updateQuery({ tier: 'STANDARD' });
-										}}
-									>
-										대학 매칭 결과 열기 — $20
-									</button>
-								</div>
-							</div>
-						{/if}
-					</div>
-				</section>
-
-				<section class="relative space-y-6 border-t border-white/8 pt-10">
-					<div class="flex flex-wrap items-center gap-3">
-						<span class="rounded-full bg-gradient-to-r from-fuchsia-500 to-azure-450 px-3 py-1 text-xs font-black text-white">
-							PRO
-						</span>
-						<span class="text-sm font-bold text-white/42">+$40 (총 $60)</span>
-					</div>
-					<h2 class="font-display text-3xl font-black tracking-[-0.05em] text-white">대학별 맞춤 분석</h2>
-
-					<div class="relative">
-						<GlassCard className={`overflow-hidden rounded-[32px] ${!proUnlocked ? 'pointer-events-none select-none blur-md opacity-25' : ''}`}>
-							<div class="no-scrollbar flex overflow-x-auto border-b border-white/8">
-								{#each universityTabs as universityTab}
-									<button
-										type="button"
-										class={`border-b-2 px-8 py-4 text-sm font-bold whitespace-nowrap transition-colors duration-200 ${
-											universityKey === universityTab.key
-												? 'border-fuchsia-400 bg-white/6 text-white'
-												: 'border-transparent text-white/45 hover:text-white'
-										}`}
-										aria-pressed={universityKey === universityTab.key}
-										onclick={() => {
-											selectUniversity(universityTab.key);
-										}}
-									>
-										{universityTab.label}
-									</button>
-								{/each}
-							</div>
-
-							<div class="space-y-10 p-6 sm:p-8">
-								<div class="grid gap-4 sm:grid-cols-3">
-									{#each selectedUniversity.stats as stat}
-										<div class={`rounded-[22px] p-4 text-center ${stat.accent ? 'border border-fuchsia-400/20 bg-fuchsia-500/10' : 'border border-white/8 bg-white/[0.03]'}`}>
-											<div class={`text-xs font-bold ${stat.accent ? 'text-fuchsia-200' : 'text-white/42'}`}>
-												{stat.label}
-											</div>
-											<div class={`mt-1 font-display text-2xl font-black tracking-[-0.05em] ${stat.accent ? 'text-fuchsia-200' : 'text-white'}`}>
-												{stat.value}
-											</div>
-										</div>
+							{#if diagnosisResult.feedback.improvements.length}
+								<ul class="space-y-3">
+									{#each diagnosisResult.feedback.improvements as item}
+										<li class="soft-text flex gap-3">
+											<span class="mt-2 size-1.5 rounded-full bg-orange-200" aria-hidden="true"></span>
+											<span>{item}</span>
+										</li>
 									{/each}
-								</div>
-
-								<div>
-									<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">축별 합격 거리</h3>
-									<div class="mt-4 grid gap-4 md:grid-cols-4">
-										{#each selectedUniversity.axisDistances as axis}
-											<div class="rounded-[22px] border border-white/8 bg-night-900/70 p-4 text-center">
-												<div class="text-sm font-bold text-white/55">{axis.label}</div>
-												<div
-													class={`mt-3 inline-flex rounded-full px-3 py-1 text-sm font-black ${
-														axis.needImprovement
-															? 'bg-orange-500/16 text-orange-200'
-															: 'bg-emerald-500/14 text-emerald-200'
-													}`}
-												>
-													{axis.value}
-												</div>
-											</div>
-										{/each}
-									</div>
-								</div>
-
-								<div class="grid gap-6 md:grid-cols-2">
-									<div class="rounded-[24px] border border-blue-400/20 bg-blue-500/10 p-6">
-										<div class="mb-4 flex items-center gap-2 text-lg font-black text-blue-200">
-											<CheckCircle2 class="size-5" aria-hidden="true" />
-											강점
-										</div>
-										<ul class="space-y-2">
-											{#each selectedUniversity.strengths as item}
-												<li class="soft-text flex gap-3">
-													<span class="mt-2 size-1.5 rounded-full bg-blue-200" aria-hidden="true"></span>
-													<span>{item}</span>
-												</li>
-											{/each}
-										</ul>
-									</div>
-
-									<div class="rounded-[24px] border border-orange-400/20 bg-orange-500/10 p-6">
-										<div class="mb-4 flex items-center gap-2 text-lg font-black text-orange-200">
-											<AlertCircle class="size-5" aria-hidden="true" />
-											보완점
-										</div>
-										<ul class="space-y-2">
-											{#each selectedUniversity.improvements as item}
-												<li class="soft-text flex gap-3">
-													<span class="mt-2 size-1.5 rounded-full bg-orange-200" aria-hidden="true"></span>
-													<span>{item}</span>
-												</li>
-											{/each}
-										</ul>
-									</div>
-								</div>
-
-								<div>
-									<h3 class="inline-flex items-center gap-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
-										<TrendingUp class="size-5 text-fuchsia-300" aria-hidden="true" />
-										역대 기조 대비
-									</h3>
-
-									<div class="mt-4 space-y-4">
-										{#each selectedUniversity.historyNotes as note}
-											<div
-												class={`rounded-r-[22px] border-l-2 p-4 ${
-													note.tone === 'blue'
-														? 'border-blue-400 bg-blue-500/10'
-														: note.tone === 'gold'
-															? 'border-yellow-400 bg-yellow-500/10'
-															: 'border-rose-400 bg-rose-500/10'
-												}`}
-											>
-												<div class={`text-xs font-black ${note.tone === 'blue' ? 'text-blue-200' : note.tone === 'gold' ? 'text-yellow-200' : 'text-rose-200'}`}>
-													{note.label}
-												</div>
-												<p class="mt-2 text-sm font-medium leading-7 text-white/70">{note.text}</p>
-											</div>
-										{/each}
-									</div>
-
-									<div class="no-scrollbar mt-6 overflow-x-auto">
-										<table class="min-w-full border-collapse text-left text-sm">
-											<thead class="border-b border-white/8 bg-white/[0.03] text-white/42">
-												<tr>
-													<th class="px-4 py-3 font-bold">연도</th>
-													<th class="px-4 py-3 font-bold">구성력</th>
-													<th class="px-4 py-3 font-bold">명암/질감</th>
-													<th class="px-4 py-3 font-bold">조형완성도</th>
-													<th class="px-4 py-3 font-bold">주제해석</th>
-												</tr>
-											</thead>
-											<tbody>
-												{#each selectedUniversity.historyRows as row}
-													<tr class={`border-b border-white/8 ${row.isMine ? 'bg-fuchsia-500/10 text-white' : 'text-white/72'}`}>
-														<td class={`px-4 py-3 ${row.isMine ? 'font-black' : 'font-semibold'}`}>{row.year}</td>
-														{#each row.scores as score, scoreIndex}
-															<td class="px-4 py-3" style="font-variant-numeric: tabular-nums;">
-																<span class={`${row.isMine ? 'font-black' : 'font-semibold'}`}>{score}</span>
-																{#if !row.isMine}
-																	<span class={`ml-2 text-xs font-bold ${row.diffs[scoreIndex] >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-																		{row.diffs[scoreIndex] > 0 ? `+${row.diffs[scoreIndex]}` : row.diffs[scoreIndex]}
-																	</span>
-																{/if}
-															</td>
-														{/each}
-													</tr>
-												{/each}
-											</tbody>
-										</table>
-									</div>
-								</div>
-
-								<div>
-									<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">맞춤 개선 가이드</h3>
-									<div class="mt-4 flex flex-wrap gap-2">
-										{#each expertGuideTabs as tab}
-											<button
-												type="button"
-												class={`rounded-2xl border px-4 py-2.5 text-sm font-bold transition-colors duration-200 ${
-													expertTab === tab.id
-														? 'border-fuchsia-400/40 bg-fuchsia-500/12 text-fuchsia-100'
-														: 'border-white/8 bg-white/[0.03] text-white/52 hover:bg-white/8 hover:text-white'
-												}`}
-												aria-pressed={expertTab === tab.id}
-												onclick={() => {
-													selectExpertGuide(tab.id);
-												}}
-											>
-												<span class="inline-flex items-center gap-2">
-													<tab.icon class="size-4" aria-hidden="true" />
-													{tab.label}
-												</span>
-											</button>
-										{/each}
-									</div>
-
-									<div class="mt-6 grid gap-4">
-										{#each selectedUniversity.expertGuides[expertTab] as guide}
-											<div
-												class={`rounded-r-[22px] border-l-4 bg-white/[0.03] p-5 ${guide.needImprovement ? 'border-orange-400' : 'border-emerald-400'}`}
-											>
-												<div class="flex flex-wrap items-center justify-between gap-3">
-													<span class="text-lg font-bold text-white">{guide.axis}</span>
-													<span class={`rounded-full px-3 py-1 text-xs font-black ${guide.needImprovement ? 'bg-orange-500/16 text-orange-200' : 'bg-emerald-500/14 text-emerald-200'}`}>
-														{guide.status}
-													</span>
-												</div>
-												<p class="soft-text mt-3">{guide.text}</p>
-											</div>
-										{/each}
-									</div>
-								</div>
-							</div>
+								</ul>
+							{:else}
+								<p class="soft-text">현재 결과에는 보완점 항목이 포함되지 않았습니다.</p>
+							{/if}
 						</GlassCard>
-
-						{#if !proUnlocked}
-							<div class="absolute inset-0 z-10 flex items-center justify-center">
-								<div class="glass-panel rounded-[32px] px-7 py-6 text-center">
-									<Sparkles class="mx-auto size-9 text-fuchsia-300" aria-hidden="true" />
-									<h3 class="mt-4 font-display text-2xl font-black tracking-[-0.04em] text-white">
-										Pro 분석으로 합격 전략 확인
-									</h3>
-									<p class="soft-text mt-2">
-										전문가 의견, 역대 기조, 대학별 맞춤 인사이트를 열 수 있습니다.
-									</p>
-									<button
-										type="button"
-										class="mt-5 rounded-full bg-gradient-to-r from-fuchsia-500 to-azure-450 px-6 py-3 font-semibold text-white transition-transform duration-200 hover:scale-[1.02]"
-										onclick={() => {
-											updateQuery({ tier: 'PRO' });
-										}}
-									>
-										대학별 심층 분석 — +$40
-									</button>
-								</div>
-							</div>
-						{/if}
 					</div>
-				</section>
-
-				<div class="flex justify-center">
-					<button
-						type="button"
-						class="rounded-full border border-white/12 bg-white/6 px-8 py-3 font-semibold text-white transition-colors duration-200 hover:bg-white/10"
-						onclick={resetDiagnosis}
-					>
-						새 작품 진단하기
-					</button>
 				</div>
+			</div>
+		{:else}
+			<div class="mx-auto flex max-w-2xl flex-col items-center gap-4 rounded-[30px] border border-white/8 bg-white/[0.03] p-8 text-center">
+				<AlertCircle class="size-10 text-rose-200" aria-hidden="true" />
+				<h2 class="font-display text-3xl font-bold tracking-[-0.04em] text-white">진단을 완료하지 못했습니다</h2>
+				<p class="soft-text">
+					요청이 중단되었거나 worker 실행이 지연되고 있습니다. 잠시 후 다시 시도하거나 worker 상태를
+					확인해 주세요.
+				</p>
+				<button
+					type="button"
+					class="inline-flex items-center justify-center gap-2 rounded-full bg-white px-5 py-3 font-semibold text-black transition-transform duration-200 hover:scale-[1.02]"
+					onclick={resetDiagnosis}
+				>
+					<RefreshCcw class="size-4" aria-hidden="true" />
+					처음부터 다시 시작
+				</button>
 			</div>
 		{/if}
 	</div>

@@ -1,6 +1,3 @@
-export type TierKey = 'FREE' | 'STANDARD' | 'PRO';
-export type UniversityKey = 'HONGIK' | 'KONKUK' | 'KOOKMIN';
-export type ExpertTab = 'AI' | 'INSTRUCTOR' | 'PROFESSOR';
 export type CompetitionCategory = '디지털' | '회화' | '캐릭터';
 export type CompetitionFilter = '전체' | CompetitionCategory;
 
@@ -53,79 +50,4 @@ export interface PortfolioWork {
 	year: string;
 	tags: string[];
 	description: string;
-}
-
-export interface DiagnosisRadarPoint {
-	subject: string;
-	score: number;
-	fullMark: number;
-}
-
-export interface ProbabilitySegment {
-	label: string;
-	value: number;
-	fillClass: string;
-	textClass: string;
-}
-
-export interface DiagnosisTierResult {
-	predictedGrade: string;
-	probability: number;
-	confidence: number;
-	segments: ProbabilitySegment[];
-}
-
-export interface AxisDistance {
-	label: string;
-	value: string;
-	needImprovement: boolean;
-}
-
-export interface HistoryNote {
-	label: string;
-	tone: 'blue' | 'gold' | 'rose';
-	text: string;
-}
-
-export interface HistoryRow {
-	year: string;
-	scores: number[];
-	diffs: number[];
-	isMine?: boolean;
-}
-
-export interface ExpertGuideItem {
-	axis: string;
-	status: string;
-	needImprovement: boolean;
-	text: string;
-}
-
-export interface UniversityAnalysis {
-	key: UniversityKey;
-	label: string;
-	name: string;
-	match: number;
-	rank: string;
-	stats: Array<{ label: string; value: string; accent?: boolean }>;
-	axisDistances: AxisDistance[];
-	strengths: string[];
-	improvements: string[];
-	historyNotes: HistoryNote[];
-	historyRows: HistoryRow[];
-	expertGuides: Record<ExpertTab, ExpertGuideItem[]>;
-}
-
-export interface DiagnosisMockData {
-	radar: DiagnosisRadarPoint[];
-	tierResult: DiagnosisTierResult;
-	standardMatches: Array<{
-		key: UniversityKey;
-		name: string;
-		match: number;
-		rank: string;
-		applicants: string;
-		ratio: string;
-	}>;
-	universities: Record<UniversityKey, UniversityAnalysis>;
 }
