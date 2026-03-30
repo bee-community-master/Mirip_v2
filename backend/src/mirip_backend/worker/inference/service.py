@@ -83,7 +83,7 @@ class WorkerInferenceService:
     async def load(self) -> None:
         if self._loaded:
             return
-        if self._mode == "stub":
+        if self._mode in {"stub", "gpu_torch"}:
             self._loaded = True
             return
         if self._mode != "cpu_onnx":
@@ -187,7 +187,10 @@ class WorkerInferenceService:
         confidence: float,
         department: str,
     ) -> list[dict[str, object]]:
-        universities = self.UNIVERSITY_MAPPING.get(department, self.UNIVERSITY_MAPPING["visual_design"])
+        universities = self.UNIVERSITY_MAPPING.get(
+            department,
+            self.UNIVERSITY_MAPPING["visual_design"],
+        )
         tier_probs = {"S": 0.85, "A": 0.65, "B": 0.45, "C": 0.25}
         base_prob = tier_probs.get(tier, 0.4)
         probabilities: list[dict[str, object]] = []
@@ -272,7 +275,7 @@ class WorkerInferenceService:
 
     async def evaluate(self, job: DiagnosisJob) -> InferenceOutput:
         await self.load()
-        if self._mode == "stub":
+        if self._mode in {"stub", "gpu_torch"}:
             return self._build_stub_output(job)
         return await self._evaluate_cpu_onnx(job)
 

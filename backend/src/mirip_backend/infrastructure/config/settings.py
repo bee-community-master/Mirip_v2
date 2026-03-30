@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,6 +45,13 @@ class WorkerSettings(BaseModel):
     run_once: bool = False
     target_job_id: str | None = None
     local_model_cache_dir: str = "/tmp/mirip-model-cache"
+
+    @field_validator("mode", mode="before")
+    @classmethod
+    def _normalize_mode_alias(cls, value: str) -> str:
+        if value == "gpu":
+            return "gpu_torch"
+        return value
 
 
 class ComputeSettings(BaseModel):

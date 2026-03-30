@@ -43,7 +43,9 @@ class ModelBundleManifest:
         return cls(
             schema_version=str(raw["schema_version"]),
             model_name=str(raw["model_name"]) if raw.get("model_name") is not None else None,
-            export_source=str(raw["export_source"]) if raw.get("export_source") is not None else None,
+            export_source=(
+                str(raw["export_source"]) if raw.get("export_source") is not None else None
+            ),
             image_size=int(raw["image_size"]) if raw.get("image_size") is not None else None,
             default_encoder=str(raw["default_encoder"]),
             files={str(key): str(value) for key, value in dict(raw["files"]).items()},

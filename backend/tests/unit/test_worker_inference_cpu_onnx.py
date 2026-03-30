@@ -13,6 +13,7 @@ import torch
 from PIL import Image
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
+from mirip_backend.infrastructure.config.settings import WorkerSettings
 from mirip_backend.shared.enums import JobStatus
 from mirip_backend.worker.inference.diagnosis_runtime import ImagePreprocessor
 from mirip_backend.worker.inference.service import (
@@ -113,8 +114,14 @@ def _write_bundle_fixture(bundle_dir: Path) -> Path:
     )
     torch.save(
         {
-            "features": {tier: torch.zeros((2, 4), dtype=torch.float32) for tier in ("S", "A", "B", "C")},
-            "image_paths": {tier: [f"{tier.lower()}-1.png", f"{tier.lower()}-2.png"] for tier in ("S", "A", "B", "C")},
+            "features": {
+                tier: torch.zeros((2, 4), dtype=torch.float32)
+                for tier in ("S", "A", "B", "C")
+            },
+            "image_paths": {
+                tier: [f"{tier.lower()}-1.png", f"{tier.lower()}-2.png"]
+                for tier in ("S", "A", "B", "C")
+            },
             "metadata": {
                 "model_source": "student-export",
                 "checkpoint_relative": "checkpoints/demo.pt",
@@ -151,7 +158,11 @@ def _write_bundle_fixture(bundle_dir: Path) -> Path:
     return bundle_dir
 
 
-def _make_job(*, job_type: str = "evaluate", input_object_names: list[str] | None = None) -> DiagnosisJob:
+def _make_job(
+    *,
+    job_type: str = "evaluate",
+    input_object_names: list[str] | None = None,
+) -> DiagnosisJob:
     return DiagnosisJob(
         id="job-cpu-onnx",
         user_id="user-1",
@@ -164,11 +175,18 @@ def _make_job(*, job_type: str = "evaluate", input_object_names: list[str] | Non
         status=JobStatus.QUEUED,
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),
-        metadata={"input_object_names": input_object_names or ["users/user-1/diagnosis/upl-1/piece.png"]},
+        metadata={
+            "input_object_names": (
+                input_object_names or ["users/user-1/diagnosis/upl-1/piece.png"]
+            )
+        },
     )
 
 
-async def test_cpu_onnx_worker_evaluates_local_bundle(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_cpu_onnx_worker_evaluates_local_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     bundle_dir = _write_bundle_fixture(tmp_path / "bundle")
     storage = StubStorageService(_make_image_bytes())
     monkeypatch.setattr(
@@ -192,7 +210,10 @@ async def test_cpu_onnx_worker_evaluates_local_bundle(monkeypatch: pytest.Monkey
     assert result.probabilities[0]["probability"] >= result.probabilities[-1]["probability"]
 
 
-async def test_cpu_onnx_worker_rejects_compare_jobs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+async def test_cpu_onnx_worker_rejects_compare_jobs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     bundle_dir = _write_bundle_fixture(tmp_path / "bundle")
     storage = StubStorageService(_make_image_bytes())
     monkeypatch.setattr(
@@ -246,3 +267,21 @@ def test_image_preprocessor_respects_shortest_edge_resize_and_center_crop(tmp_pa
     )
     expected = np.transpose(np.asarray(expected_image, dtype=np.float32), (2, 0, 1))[None, ...]
     assert np.allclose(pixel_values, expected)
+
+
+async def test_gpu_torch_mode_keeps_stub_placeholder_behavior(tmp_path: Path) -> None:
+    service = WorkerInferenceService(
+        mode="gpu_torch",
+        model_uri=None,
+        storage_service=StubStorageService(_make_image_bytes()),  # type: ignore[arg-type]
+        local_model_cache_dir=str(tmp_path / "cache"),
+    )
+
+    result = await service.evaluate(_make_job())
+
+    assert result.summary == "Single diagnosis completed."
+    assert result.tier in {"S", "A", "B", "C"}
+
+
+def test_worker_settings_accept_legacy_gpu_alias() -> None:
+    assert WorkerSettings(mode="gpu").mode == "gpu_torch"
