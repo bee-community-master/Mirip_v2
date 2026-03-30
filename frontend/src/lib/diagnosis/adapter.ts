@@ -1,5 +1,10 @@
 import type { DiagnosisResultDto, DiagnosisResultProbabilityDto } from '$lib/api/types';
-import type { DiagnosisFeedbackSummary, DiagnosisProbabilityItem, DiagnosisRadarPoint, DiagnosisResultView } from '$lib/types';
+import type {
+	DiagnosisFeedbackSummary,
+	DiagnosisProbabilityItem,
+	DiagnosisRadarPoint,
+	DiagnosisResultView
+} from '$lib/diagnosis/types';
 
 const SCORE_LABELS: Record<string, string> = {
 	composition: '구성력',

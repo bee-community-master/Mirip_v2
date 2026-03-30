@@ -1,4 +1,4 @@
-import { MiripApiError, requestJson } from '$lib/api/http';
+import { MiripApiError, requestJson, type JsonResponse } from '$lib/api/http';
 import type {
 	CompleteUploadResponseDto,
 	CreateDiagnosisJobRequestDto,
@@ -11,7 +11,7 @@ import type {
 export function isFakeUploadMode(
 	session: Pick<UploadSessionDto, 'headers'>,
 	responseHeaders?: Headers
-) {
+): boolean {
 	const headerValue = responseHeaders?.get('x-mirip-mode');
 	const sessionValue =
 		session.headers['x-mirip-mode'] ?? session.headers['X-Mirip-Mode'] ?? session.headers['X-MIRIP-MODE'];
@@ -22,7 +22,7 @@ export function isFakeUploadMode(
 export async function createUploadSession(
 	file: File,
 	fetchFn?: typeof fetch
-) {
+): Promise<JsonResponse<CreateUploadSessionResponseDto>> {
 	return requestJson<CreateUploadSessionResponseDto>('/v1/uploads', {
 		method: 'POST',
 		body: {
@@ -39,7 +39,7 @@ export async function uploadToSignedUrl(
 	session: UploadSessionDto,
 	file: File,
 	fetchFn: typeof fetch = fetch
-) {
+): Promise<void> {
 	const uploadHeaders = new Headers();
 
 	for (const [key, value] of Object.entries(session.headers)) {
@@ -69,7 +69,10 @@ export async function uploadToSignedUrl(
 	}
 }
 
-export async function completeUpload(uploadId: string, fetchFn?: typeof fetch) {
+export async function completeUpload(
+	uploadId: string,
+	fetchFn?: typeof fetch
+): Promise<CompleteUploadResponseDto> {
 	const response = await requestJson<CompleteUploadResponseDto>(`/v1/uploads/${uploadId}/complete`, {
 		method: 'POST',
 		fetchFn
@@ -81,7 +84,7 @@ export async function completeUpload(uploadId: string, fetchFn?: typeof fetch) {
 export async function createDiagnosisJob(
 	payload: CreateDiagnosisJobRequestDto,
 	fetchFn?: typeof fetch
-) {
+): Promise<DiagnosisJobDto> {
 	const response = await requestJson<DiagnosisJobDto>('/v1/diagnosis/jobs', {
 		method: 'POST',
 		body: payload,
@@ -91,7 +94,10 @@ export async function createDiagnosisJob(
 	return response.data;
 }
 
-export async function getDiagnosisJobStatus(jobId: string, fetchFn?: typeof fetch) {
+export async function getDiagnosisJobStatus(
+	jobId: string,
+	fetchFn?: typeof fetch
+): Promise<DiagnosisJobStatusResponseDto> {
 	const response = await requestJson<DiagnosisJobStatusResponseDto>(`/v1/diagnosis/jobs/${jobId}`, {
 		fetchFn
 	});

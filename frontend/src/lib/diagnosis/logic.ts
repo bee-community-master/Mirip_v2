@@ -1,4 +1,8 @@
-import type { DiagnosisJobDto, DiagnosisJobStatus } from '$lib/api/types';
+import type {
+	CreateDiagnosisJobRequestDto,
+	DiagnosisJobDto,
+	DiagnosisJobStatus
+} from '$lib/api/types';
 
 export interface DiagnosisFileLike {
 	type: string;
@@ -35,4 +39,15 @@ export function getDiagnosisJobStatusLabel(status: DiagnosisJobStatus) {
 
 export function getDiagnosisFailureMessage(job: Pick<DiagnosisJobDto, 'failure_reason'>) {
 	return job.failure_reason ?? '진단 작업이 완료되지 않았습니다. 로컬 worker 로그를 확인해 주세요.';
+}
+
+export function buildDefaultDiagnosisJobRequest(uploadId: string): CreateDiagnosisJobRequestDto {
+	return {
+		upload_ids: [uploadId],
+		job_type: 'evaluate',
+		department: 'visual_design',
+		include_feedback: true,
+		theme: null,
+		language: 'ko'
+	};
 }

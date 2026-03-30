@@ -25,12 +25,13 @@
 	import { mapDiagnosisResult } from '$lib/diagnosis/adapter';
 	import { transitionDiagnosisStage, type DiagnosisStage } from '$lib/diagnosis/flow';
 	import {
+		buildDefaultDiagnosisJobRequest,
 		diagnosisPollIntervalInMs,
 		getDiagnosisFailureMessage,
 		getDiagnosisJobStatusLabel,
 		validateDiagnosisFile
 	} from '$lib/diagnosis/logic';
-	import type { DiagnosisResultView } from '$lib/types';
+	import type { DiagnosisResultView } from '$lib/diagnosis/types';
 
 	let stage = $state<DiagnosisStage>('upload');
 	let selectedFile = $state<File | null>(null);
@@ -44,16 +45,15 @@
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let activeRunId = 0;
 	let isDestroyed = false;
+	const diagnosisUpdatedAtFormatter = new Intl.DateTimeFormat('ko-KR', {
+		dateStyle: 'medium',
+		timeStyle: 'short'
+	});
 
 	const currentTier = $derived(diagnosisResult?.tier ?? null);
 	const topProbability = $derived(diagnosisResult?.probabilities[0] ?? null);
 	const formattedUpdatedAt = $derived(
-		currentJob
-			? new Intl.DateTimeFormat('ko-KR', {
-					dateStyle: 'medium',
-					timeStyle: 'short'
-				}).format(new Date(currentJob.updated_at))
-			: null
+		currentJob ? diagnosisUpdatedAtFormatter.format(new Date(currentJob.updated_at)) : null
 	);
 	const workerHintVisible = $derived(stage === 'analyzing' && pollCount >= 3);
 
@@ -194,14 +194,7 @@
 				return;
 			}
 
-			const job = await createDiagnosisJob({
-				upload_ids: [completedUpload.upload.id],
-				job_type: 'evaluate',
-				department: 'visual_design',
-				include_feedback: true,
-				theme: null,
-				language: 'ko'
-			});
+			const job = await createDiagnosisJob(buildDefaultDiagnosisJobRequest(completedUpload.upload.id));
 
 			if (!isRunActive(runId)) {
 				return;

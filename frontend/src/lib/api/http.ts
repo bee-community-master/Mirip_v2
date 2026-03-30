@@ -7,13 +7,13 @@ const DEFAULT_API_BASE_URL = 'http://localhost:8000';
 export class MiripApiError extends Error {
 	status: number;
 	code: string;
-	detail: Record<string, unknown> | null | undefined;
+	detail: Record<string, unknown> | null;
 
 	constructor({
 		status,
 		code,
 		message,
-		detail
+		detail = null
 	}: {
 		status: number;
 		code: string;
@@ -44,7 +44,7 @@ function trimTrailingSlash(value: string) {
 	return value.endsWith('/') ? value.slice(0, -1) : value;
 }
 
-function buildApiUrl(pathname: string) {
+function buildApiUrl(pathname: string): string {
 	const baseUrl = trimTrailingSlash(env.PUBLIC_MIRIP_API_BASE_URL || DEFAULT_API_BASE_URL);
 	const path = pathname.startsWith('/') ? pathname : `/${pathname}`;
 	return `${baseUrl}${path}`;
