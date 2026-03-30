@@ -16,7 +16,7 @@ from training.config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig, def
 from training.datasets import DinoPairBatchCollator, DinoPairDataset
 from training.models import DinoV3PairwiseModel
 from training.trainer import DinoV3Trainer
-from training.utils import resolve_project_path, set_seed
+from training.utils import project_relative_path, resolve_project_path, set_seed
 
 
 def parse_args() -> argparse.Namespace:
@@ -130,6 +130,11 @@ def main() -> int:
         "paths": {
             "best_checkpoint": str(checkpoint_dir / "best_model.pt"),
             "checkpoint_dir": str(checkpoint_dir),
+            "best_checkpoint_relative": project_relative_path(checkpoint_dir / "best_model.pt"),
+            "checkpoint_dir_relative": project_relative_path(checkpoint_dir),
+            "latest_completed_checkpoint_relative": project_relative_path(summary["latest_completed_checkpoint"])
+            if summary.get("latest_completed_checkpoint")
+            else None,
         },
     }
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -201,6 +201,8 @@ class DinoV3Trainer:
             "val_accuracy": [],
             "same_dept_accuracy": [],
         }
+        latest_completed_checkpoint: Path | None = None
+        latest_completed_metrics: dict[str, float] | None = None
 
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
@@ -216,6 +218,12 @@ class DinoV3Trainer:
             history["val_accuracy"].append(metrics["val_accuracy"])
             history["same_dept_accuracy"].append(metrics["same_dept_accuracy"])
 
+            checkpoint_metrics = {
+                "epoch": epoch + 1,
+                "train_loss": train_loss,
+                **metrics,
+            }
+
             if self.config.wandb_enabled and wandb is not None:
                 wandb.log(
                     {
@@ -229,11 +237,21 @@ class DinoV3Trainer:
                     }
                 )
 
-            self.save_checkpoint(f"checkpoint_epoch_{epoch + 1:04d}.pt")
+            latest_completed_checkpoint = self.save_checkpoint(
+                f"checkpoint_epoch_{epoch + 1:04d}.pt",
+                extra={"epoch_metrics": checkpoint_metrics},
+            )
+            latest_completed_metrics = checkpoint_metrics
             if metrics["val_loss"] < self.best_val_loss - self.config.early_stopping_min_delta:
                 self.best_val_loss = metrics["val_loss"]
                 self.patience_counter = 0
-                self.save_checkpoint("best_model.pt", extra={"best_metrics": metrics})
+                self.save_checkpoint(
+                    "best_model.pt",
+                    extra={
+                        "best_metrics": metrics,
+                        "source_checkpoint": latest_completed_checkpoint.name if latest_completed_checkpoint else None,
+                    },
+                )
             else:
                 self.patience_counter += 1
 
@@ -249,4 +267,6 @@ class DinoV3Trainer:
             "best_val_loss": self.best_val_loss,
             "epochs_completed": self.current_epoch + 1,
             "precision": self.precision,
+            "latest_completed_checkpoint": str(latest_completed_checkpoint) if latest_completed_checkpoint else None,
+            "latest_completed_metrics": latest_completed_metrics,
         }

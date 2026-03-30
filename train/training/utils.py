@@ -23,6 +23,14 @@ def resolve_project_path(path: str | Path) -> Path:
     return (PROJECT_ROOT / candidate).resolve()
 
 
+def project_relative_path(path: str | Path) -> str:
+    resolved = resolve_project_path(path)
+    try:
+        return str(resolved.relative_to(PROJECT_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
 def normalize_staged_image_reference(image_path: str | Path) -> str | None:
     raw_value = str(image_path).strip()
     if not raw_value:

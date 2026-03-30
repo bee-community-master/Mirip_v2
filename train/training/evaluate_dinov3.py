@@ -17,7 +17,7 @@ from training.config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig, def
 from training.datasets import DinoPairBatchCollator, DinoPairDataset
 from training.evaluation import evaluate_pairwise
 from training.models import DinoV3PairwiseModel
-from training.utils import resolve_project_path, set_seed
+from training.utils import project_relative_path, resolve_project_path, set_seed
 
 
 def parse_args() -> argparse.Namespace:
@@ -91,6 +91,7 @@ def main() -> int:
 
     payload = {
         "checkpoint": str(checkpoint_path),
+        "checkpoint_relative": project_relative_path(checkpoint_path),
         "metrics": results,
         "config": config_dict,
     }
