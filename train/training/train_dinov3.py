@@ -52,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--precision", default="auto", choices=["auto", "bf16", "fp16", "fp32"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume-from")
+    parser.add_argument("--resume-next-epoch", action="store_true")
     parser.add_argument("--wandb-project", default="mirip-v2-dinov3")
     parser.add_argument("--wandb-run-name")
     parser.add_argument("--wandb", action="store_true")
@@ -164,7 +165,12 @@ def main() -> int:
         freeze_backbone=True,
         backbone_dtype=config.backbone_dtype,
     )
-    trainer = DinoV3Trainer(model=model, config=config, resume_from=args.resume_from)
+    trainer = DinoV3Trainer(
+        model=model,
+        config=config,
+        resume_from=args.resume_from,
+        resume_next_epoch=args.resume_next_epoch,
+    )
     postprocess_kwargs = resolve_postprocess_kwargs(args, config)
 
     def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> None:

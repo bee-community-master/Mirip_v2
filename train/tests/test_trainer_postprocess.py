@@ -69,6 +69,47 @@ class TrainerPostprocessTests(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "checkpoint_epoch_0002.pt").exists())
             self.assertEqual(Path(summary["latest_completed_checkpoint"]).name, "checkpoint_epoch_0002.pt")
 
+    def test_resume_next_epoch_skips_repeating_completed_epoch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=1,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            batch = (
+                torch.tensor([[1.0], [2.0]], dtype=torch.float32),
+                torch.tensor([[0.5], [1.5]], dtype=torch.float32),
+                torch.tensor([1.0, -1.0], dtype=torch.float32),
+                torch.tensor([1, 0], dtype=torch.int64),
+            )
+            trainer.train([batch], [batch])
+
+            resumed = DinoV3Trainer(
+                model=DummyPairwiseModel(),
+                config=DinoV3TrainingConfig(
+                    checkpoint_dir=temp_dir,
+                    max_epochs=5,
+                    batch_size=2,
+                    gradient_accumulation_steps=1,
+                    num_workers=0,
+                    persistent_workers=False,
+                    pin_memory=False,
+                    device="cpu",
+                    precision="fp32",
+                ),
+                resume_from=str(Path(temp_dir) / "checkpoint_epoch_0001.pt"),
+                resume_next_epoch=True,
+            )
+
+            self.assertEqual(resumed.current_epoch, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

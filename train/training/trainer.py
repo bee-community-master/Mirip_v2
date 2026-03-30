@@ -34,6 +34,7 @@ class DinoV3Trainer:
         model: torch.nn.Module,
         config: DinoV3TrainingConfig,
         resume_from: str | None = None,
+        resume_next_epoch: bool = False,
     ) -> None:
         self.model = model
         self.config = config
@@ -64,6 +65,8 @@ class DinoV3Trainer:
 
         if resume_from:
             self.load_checkpoint(resume_from)
+            if resume_next_epoch:
+                self.current_epoch += 1
 
     def _autocast(self):
         if self.device.type != "cuda" or self.precision == "fp32":
