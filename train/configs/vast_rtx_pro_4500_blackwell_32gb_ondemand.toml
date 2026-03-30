@@ -24,12 +24,12 @@ mkdir -p /workspace/.cache/huggingface
 [workspace]
 remote_root = "/workspace/mirip_v2"
 sync_paths = [
-  "data",
-  "configs",
-  "docs",
-  "reports",
-  "scripts",
-  "training",
+  "train/data",
+  "train/configs",
+  "train/docs",
+  "train/reports",
+  "train/scripts",
+  "train/training",
   "roadmap.md",
   "README.md",
 ]
