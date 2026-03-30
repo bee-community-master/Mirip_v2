@@ -30,11 +30,15 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         command = vast_ai_training_runner.build_remote_prune_command(
             "/workspace/mirip_v2",
             "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0009.pt",
+            "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0009.pt",
         )
 
         self.assertIn("checkpoint_epoch_0009.pt", command)
         self.assertIn('find checkpoints/dinov3_vit7b16 \\( -type f -o -type l \\) -name "*.pt"', command)
         self.assertIn("best_model.pt", command)
+        self.assertIn("REGISTRY_CANDIDATE_EPOCH=9", command)
+        self.assertIn("LATEST_REMOTE_EPOCH", command)
+        self.assertNotIn("then;", command)
 
     def test_build_launch_agent_payload_targets_sync_prune(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -56,12 +60,26 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 vast_ai_training_runner.load_postprocess_registry(registry_path)
 
+    def test_registry_is_stale_when_newer_checkpoint_exists_locally(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoints_root = Path(temp_dir) / "dinov3_vit7b16" / "full"
+            checkpoints_root.mkdir(parents=True, exist_ok=True)
+            (checkpoints_root / "checkpoint_epoch_0008.pt").write_text("", encoding="utf-8")
+            (checkpoints_root / "checkpoint_epoch_0009.pt").write_text("", encoding="utf-8")
+
+            stale = vast_ai_training_runner.registry_is_stale_for_local_checkpoints(
+                {"current_candidate_checkpoint": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt"},
+                checkpoints_root.parent,
+            )
+
+            self.assertTrue(stale)
+
     def test_full_stage_command_runs_postprocess_selection_before_final_eval(self) -> None:
         command = vast_ai_training_runner.build_stage_command("full", "/workspace/mirip_v2")
 
-        self.assertIn("select_postprocess_best.py", command)
+        self.assertIn("--postprocess-registry reports/dinov3_vit7b16_postprocess_registry.json", command)
+        self.assertIn("--postprocess-report reports/dinov3_vit7b16_full_candidate.json", command)
         self.assertIn("dinov3_vit7b16_postprocess_registry.json", command)
-        self.assertIn("dinov3_vit7b16_full_candidate.json", command)
         self.assertIn("dinov3_vit7b16_full.json", command)
 
 

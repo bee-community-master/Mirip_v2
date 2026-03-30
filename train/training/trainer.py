@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import torch
 from torch.optim import AdamW
@@ -194,7 +194,12 @@ class DinoV3Trainer:
         self.patience_counter = int(checkpoint.get("patience_counter", 0))
         self.peak_vram_gb = float(checkpoint.get("peak_vram_gb", 0.0))
 
-    def train(self, train_loader: DataLoader, val_loader: DataLoader) -> dict[str, Any]:
+    def train(
+        self,
+        train_loader: DataLoader,
+        val_loader: DataLoader,
+        post_epoch_callback: Callable[[Path, dict[str, float]], None] | None = None,
+    ) -> dict[str, Any]:
         history: dict[str, list[float]] = {
             "train_loss": [],
             "val_loss": [],
@@ -242,6 +247,8 @@ class DinoV3Trainer:
                 extra={"epoch_metrics": checkpoint_metrics},
             )
             latest_completed_metrics = checkpoint_metrics
+            if post_epoch_callback is not None:
+                post_epoch_callback(latest_completed_checkpoint, checkpoint_metrics)
             if metrics["val_loss"] < self.best_val_loss - self.config.early_stopping_min_delta:
                 self.best_val_loss = metrics["val_loss"]
                 self.patience_counter = 0

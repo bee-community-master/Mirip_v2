@@ -12,11 +12,11 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from training.anchors import AnchorStore, evaluate_anchor_tier_accuracy
-from training.config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig, default_num_workers
+from training.config import DEFAULT_DINOV3_MODEL_NAME, default_num_workers
 from training.datasets import DinoPairBatchCollator, DinoPairDataset
+from training.postprocess import load_checkpoint_model
+from training.anchors import AnchorStore, evaluate_anchor_tier_accuracy
 from training.evaluation import evaluate_pairwise
-from training.models import DinoV3PairwiseModel
 from training.utils import project_relative_path, resolve_project_path, set_seed
 
 
@@ -44,18 +44,7 @@ def main() -> int:
 
     map_location = args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu"
     checkpoint_path = resolve_project_path(args.checkpoint)
-    checkpoint = torch.load(checkpoint_path, map_location=map_location)
-    config_dict = checkpoint.get("config", DinoV3TrainingConfig().to_dict())
-    model = DinoV3PairwiseModel(
-        model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
-        projector_hidden_dim=int(config_dict.get("projector_hidden_dim", 512)),
-        projector_output_dim=int(config_dict.get("projector_output_dim", 256)),
-        dropout=float(config_dict.get("dropout", 0.3)),
-        margin=float(config_dict.get("margin", 0.3)),
-        freeze_backbone=True,
-        backbone_dtype=str(config_dict.get("backbone_dtype", "auto")),
-    )
-    model.load_state_dict(checkpoint["model_state_dict"])
+    _, config_dict, model = load_checkpoint_model(checkpoint_path, map_location=map_location)
 
     dataset = DinoPairDataset(pairs_csv=args.pairs_val)
     collator = DinoPairBatchCollator(

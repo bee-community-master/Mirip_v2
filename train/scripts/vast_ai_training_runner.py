@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import plistlib
+import re
 import shlex
 import sys
 import time
@@ -35,19 +36,18 @@ TRAIN_GRADIENT_ACCUMULATION_STEPS = 4
 TRAIN_NUM_WORKERS = 8
 TRAIN_PREFETCH_FACTOR = 4
 TRAIN_FULL_TRAIN_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_train.json"
-TRAIN_FULL_TRAIN_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_full_train.json"
 TRAIN_FULL_CANDIDATE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_candidate.json"
 TRAIN_FULL_CANDIDATE_ANCHORS = f"{ANCHORS_REL_DIR}/{TRAIN_MODEL_SLUG}_candidate_anchors.pt"
 TRAIN_FULL_FINAL_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full.json"
 TRAIN_FULL_FINAL_ANCHORS = f"{ANCHORS_REL_DIR}/{TRAIN_MODEL_SLUG}_anchors.pt"
 TRAIN_FULL_REGISTRY = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_postprocess_registry.json"
 TRAIN_FULL_REGISTRY_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_postprocess_registry.json"
-TRAIN_FULL_CANDIDATE_ANCHOR_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_candidate_anchors.json"
 TRAIN_FULL_FINAL_ANCHOR_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_anchors.json"
 ENV_PATH = ROOT / ".env"
 LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 SYNC_LOG_DIR = ROOT / "reports" / "vast_sync"
+CHECKPOINT_EPOCH_PATTERN = re.compile(r"checkpoint_epoch_(\d+)\.pt$")
 
 from vast_ai_control import (  # noqa: E402
     VastClient,
@@ -114,6 +114,32 @@ def load_postprocess_registry(path: str | Path) -> dict[str, object]:
     if not str(selected).startswith("checkpoints/"):
         raise SystemExit(f"Selected checkpoint must stay under train/checkpoints: {selected}")
     return payload
+
+
+def checkpoint_epoch_value(path: str | Path | None) -> int | None:
+    if path in (None, ""):
+        return None
+    match = CHECKPOINT_EPOCH_PATTERN.search(str(path))
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def newest_local_checkpoint_epoch(checkpoints_root: Path) -> int | None:
+    epochs = [
+        checkpoint_epoch_value(path.name)
+        for path in checkpoints_root.glob("**/checkpoint_epoch_*.pt")
+    ]
+    epochs = [epoch for epoch in epochs if epoch is not None]
+    return max(epochs) if epochs else None
+
+
+def registry_is_stale_for_local_checkpoints(registry: dict[str, object], checkpoints_root: Path) -> bool:
+    newest_local_epoch = newest_local_checkpoint_epoch(checkpoints_root)
+    candidate_epoch = checkpoint_epoch_value(registry.get("current_candidate_checkpoint"))
+    if newest_local_epoch is None or candidate_epoch is None:
+        return False
+    return newest_local_epoch > candidate_epoch
 
 
 def _remote_python(remote_root: str) -> str:
@@ -200,12 +226,6 @@ def _build_full_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     checkpoint_dir = f"checkpoints/{TRAIN_MODEL_SLUG}/full"
     smoke_checkpoint = f"checkpoints/{TRAIN_MODEL_SLUG}/smoke/best_model.pt"
-    current_checkpoint_value = _json_value_command(
-        python_bin,
-        TRAIN_FULL_TRAIN_REPORT_FILE,
-        "payload.get('paths', {}).get('latest_completed_checkpoint_relative') or payload.get('latest_completed_checkpoint')",
-        "latest completed checkpoint missing from training summary",
-    )
     selected_checkpoint_value = _json_value_command(
         python_bin,
         TRAIN_FULL_REGISTRY_FILE,
@@ -216,11 +236,7 @@ def _build_full_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --resume-from {smoke_checkpoint} --epochs 50 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report {TRAIN_FULL_TRAIN_REPORT}",
-            f'CURRENT_CHECKPOINT="{current_checkpoint_value}"',
-            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint \"$CURRENT_CHECKPOINT\" --metadata training/data/metadata_train.csv --image-root data --output {TRAIN_FULL_CANDIDATE_ANCHORS} --report {TRAIN_FULL_CANDIDATE_ANCHOR_REPORT}",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint \"$CURRENT_CHECKPOINT\" --pairs-val training/data/pairs_val.csv --image-root data --anchors {TRAIN_FULL_CANDIDATE_ANCHORS} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output {TRAIN_FULL_CANDIDATE_REPORT}",
-            f"{python_bin} {TRAINING_DIR}/select_postprocess_best.py --current-checkpoint \"$CURRENT_CHECKPOINT\" --current-report {TRAIN_FULL_CANDIDATE_REPORT} --output-registry {TRAIN_FULL_REGISTRY}",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --resume-from {smoke_checkpoint} --epochs 50 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
             f'SELECTED_CHECKPOINT="{selected_checkpoint_value}"',
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --metadata training/data/metadata_train.csv --image-root data --output {TRAIN_FULL_FINAL_ANCHORS} --report {TRAIN_FULL_FINAL_ANCHOR_REPORT}",
             f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --pairs-val training/data/pairs_val.csv --image-root data --anchors {TRAIN_FULL_FINAL_ANCHORS} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output {TRAIN_FULL_FINAL_REPORT}",
@@ -276,22 +292,38 @@ def pull_artifacts(config_path: str, instance_id: int) -> int:
     return 0
 
 
-def build_remote_prune_command(remote_root: str, retained_checkpoint: str) -> str:
+def build_remote_prune_command(
+    remote_root: str,
+    retained_checkpoint: str,
+    registry_candidate_checkpoint: str | None = None,
+) -> str:
     retained = retained_checkpoint.strip()
     selected_dir = str(Path(retained).parent).replace("\\", "/")
     checkpoint_root = f"checkpoints/{TRAIN_MODEL_SLUG}"
-    return _bash_command(
+    command_parts = [
+        "set -euo pipefail",
+        f"cd {shlex.quote(remote_root)}/{TRAIN_ROOT}",
+        f'SELECTED_CHECKPOINT={shlex.quote(retained)}',
+        'if [ ! -f "$SELECTED_CHECKPOINT" ]; then echo "Selected checkpoint missing: $SELECTED_CHECKPOINT" >&2; exit 1; fi',
+    ]
+    candidate_epoch = checkpoint_epoch_value(registry_candidate_checkpoint)
+    if candidate_epoch is not None:
+        command_parts.extend(
+            [
+                f"REGISTRY_CANDIDATE_EPOCH={candidate_epoch}",
+                f'LATEST_REMOTE_EPOCH=$(find {shlex.quote(checkpoint_root)} -type f -name "checkpoint_epoch_*.pt" | sed -E \'s|.*checkpoint_epoch_0*([0-9]+)\\.pt|\\1|\' | sort -n | tail -n 1)',
+                'if [ -n "$LATEST_REMOTE_EPOCH" ] && [ "$LATEST_REMOTE_EPOCH" -gt "$REGISTRY_CANDIDATE_EPOCH" ]; then echo "Registry is stale on remote: candidate epoch $REGISTRY_CANDIDATE_EPOCH, newest checkpoint epoch $LATEST_REMOTE_EPOCH" >&2; exit 1; fi',
+            ]
+        )
+    command_parts.extend(
         [
-            "set -euo pipefail",
-            f"cd {shlex.quote(remote_root)}/{TRAIN_ROOT}",
-            f'SELECTED_CHECKPOINT={shlex.quote(retained)}',
-            'if [ ! -f "$SELECTED_CHECKPOINT" ]; then echo "Selected checkpoint missing: $SELECTED_CHECKPOINT" >&2; exit 1; fi',
             f'find {shlex.quote(checkpoint_root)} \\( -type f -o -type l \\) -name "*.pt" ! -path "$SELECTED_CHECKPOINT" -delete',
             f'BEST_LINK={shlex.quote(f"{selected_dir}/best_model.pt")}',
             'if [ "$SELECTED_CHECKPOINT" != "$BEST_LINK" ]; then rm -f "$BEST_LINK"; ln -sfn "$(basename "$SELECTED_CHECKPOINT")" "$BEST_LINK"; fi',
             'echo "retained=$SELECTED_CHECKPOINT"',
         ]
     )
+    return _bash_command(command_parts)
 
 
 def sync_prune(config_path: str, instance_id: int) -> int:
@@ -301,11 +333,22 @@ def sync_prune(config_path: str, instance_id: int) -> int:
         return pull_result
 
     registry = load_postprocess_registry(TRAIN_FULL_REGISTRY)
+    checkpoints_root = _resolve_train_path(CHECKPOINTS_REL_DIR) / TRAIN_MODEL_SLUG
+    if registry_is_stale_for_local_checkpoints(registry, checkpoints_root):
+        raise SystemExit(
+            "Postprocess registry is older than the newest downloaded checkpoint. "
+            "Skip prune until remote postprocess finishes updating the registry."
+        )
     retained_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
+    current_candidate_checkpoint = registry.get("current_candidate_checkpoint")
 
     config = load_toml(config_absolute)
     remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
-    command = build_remote_prune_command(remote_root, retained_checkpoint)
+    command = build_remote_prune_command(
+        remote_root,
+        retained_checkpoint,
+        str(current_candidate_checkpoint) if current_candidate_checkpoint else None,
+    )
     api_key = require_env("VAST_API_KEY")
     client = VastClient(api_key)
     return execute_stage(client, instance_id, command, follow=True, follow_delay=3)
