@@ -45,6 +45,8 @@
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
 	let activeRunId = 0;
 	let isDestroyed = false;
+	const defaultPreviewImageUrl =
+		'https://images.unsplash.com/photo-1593472807861-5bb884af28f6?q=80&w=800&auto=format&fit=crop';
 	const diagnosisUpdatedAtFormatter = new Intl.DateTimeFormat('ko-KR', {
 		dateStyle: 'medium',
 		timeStyle: 'short'
@@ -56,6 +58,10 @@
 		currentJob ? diagnosisUpdatedAtFormatter.format(new Date(currentJob.updated_at)) : null
 	);
 	const workerHintVisible = $derived(stage === 'analyzing' && pollCount >= 3);
+	const previewImageSrc = $derived(previewUrl ?? defaultPreviewImageUrl);
+	const selectedFileSummary = $derived(
+		selectedFile ? `${selectedFile.name} · ${Math.round(selectedFile.size / 1024)} KB` : null
+	);
 
 	function clearPreview() {
 		if (previewUrl) {
@@ -354,7 +360,7 @@
 
 					<div class="overflow-hidden rounded-[24px] border border-white/8">
 						<img
-							src={previewUrl ?? 'https://images.unsplash.com/photo-1593472807861-5bb884af28f6?q=80&w=800&auto=format&fit=crop'}
+							src={previewImageSrc}
 							alt="업로드한 작품 미리보기"
 							width="900"
 							height="1100"
@@ -423,16 +429,16 @@
 									</div>
 									<div class="overflow-hidden rounded-[18px] border border-white/8">
 										<img
-											src={previewUrl ?? 'https://images.unsplash.com/photo-1593472807861-5bb884af28f6?q=80&w=800&auto=format&fit=crop'}
+											src={previewImageSrc}
 											alt="진단에 사용한 업로드 이미지"
 											width="800"
 											height="1000"
 											class="aspect-[4/5] w-full object-cover"
 										/>
 									</div>
-									{#if selectedFile}
+									{#if selectedFileSummary}
 										<div class="mt-3 text-xs text-white/52">
-											{selectedFile.name} · {Math.round(selectedFile.size / 1024)} KB
+											{selectedFileSummary}
 										</div>
 									{/if}
 								</div>

@@ -113,6 +113,41 @@ async def test_gcs_download_tree_rejects_bucket_root_uri(tmp_path: Path) -> None
         )
 
 
+async def test_gcs_download_tree_scopes_to_directory_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    class FakeBlob:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        def download_to_filename(self, filename: str) -> None:
+            Path(filename).write_text(self.name, encoding="utf-8")
+
+    class FakeClient:
+        def bucket(self, bucket_name: str) -> str:
+            return bucket_name
+
+        def list_blobs(self, bucket: str, prefix: str) -> list[FakeBlob]:
+            assert bucket == "mirip-v2-assets"
+            assert prefix == "models/vitl/"
+            return [
+                FakeBlob("models/vitl/manifest.json"),
+                FakeBlob("models/vitl-extra/manifest.json"),
+            ]
+
+    storage = GCSStorageService(GCSSettings(project_id="mirip-v2"), backend="gcs")
+    monkeypatch.setattr(GCSStorageService, "_client", lambda self: FakeClient())
+
+    downloaded = await storage.download_tree(
+        gcs_uri="gs://mirip-v2-assets/models/vitl",
+        destination_dir=tmp_path,
+    )
+
+    assert downloaded == [tmp_path / "manifest.json"]
+    assert not (tmp_path / "extra" / "manifest.json").exists()
+
+
 async def test_failed_remote_bundle_materialization_does_not_mark_cache_ready(
     tmp_path: Path,
 ) -> None:
