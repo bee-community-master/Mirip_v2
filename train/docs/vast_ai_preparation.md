@@ -56,7 +56,7 @@ SSH/Jupyter 런타입은 Docker entrypoint를 Vast 쪽 초기화 스크립트로
 - 표준 image / disk / env / onstart 템플릿
 - 로컬 파일 rsync 업로드 루틴
 - SSH / execute / destroy 제어 스크립트
-- DINOv3 학습용 stage runner (`scripts/vast_ai_training_runner.py`)
+- DINOv3 학습용 stage runner (`train/scripts/vast_ai_training_runner.py`)
 - bootstrap / prepare-data / smoke / full 원격 실행 커맨드
 
 ## 공식 문서

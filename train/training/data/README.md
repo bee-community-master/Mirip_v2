@@ -4,7 +4,7 @@
 
 - 소스 오브 트루스: `Mirip_v2/data/crawled/metadata`
 - 재생성 순서:
-  1. `python3 training/prepare_snapshot.py`
-  2. `python3 training/build_pairs.py`
+  1. `python3 train/training/prepare_snapshot.py`
+  2. `python3 train/training/build_pairs.py`
 
 현재 남아 있는 CSV는 참조용일 수 있으며, 최종 crawl snapshot이 고정되면 다시 덮어써야 한다.

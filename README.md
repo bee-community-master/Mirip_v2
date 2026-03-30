@@ -5,9 +5,9 @@ The repository is organized so each area can evolve independently while still sh
 
 ## Frontend
 
-- Root `src/` contains the SvelteKit mock application used to validate the Mirip v2 UX flows.
+- `frontend/` contains the SvelteKit mock application used to validate the Mirip v2 UX flows.
 - The mock currently covers the home, diagnosis, competitions, and portfolio screens with local fixtures and reusable UI components.
-- Use the standard frontend scripts from the repository root: `npm run check`, `npm run test`, and `npm run build`.
+- Run the standard frontend scripts from `frontend/`: `npm run check`, `npm run test`, and `npm run build`.
 
 ## Backend
 
@@ -22,12 +22,12 @@ See [BACKEND_V2_PLAN.md](./BACKEND_V2_PLAN.md) for the implementation plan and [
 
 ## Training
 
-The training workspace prepares `#1 DINOv2 baseline reproduction` and `#2 DINOv3 teacher training` on top of Vast.ai-managed GPU environments.
+The training workspace under `train/` prepares `#1 DINOv2 baseline reproduction` and `#2 DINOv3 teacher training` on top of Vast.ai-managed GPU environments.
 
-- [docs/vast_ai_preparation.md](./docs/vast_ai_preparation.md): Vast.ai operation notes
-- [training/dinov3_vast_plan.md](./training/dinov3_vast_plan.md): DINOv3 training and evaluation plan
-- [scripts/vast_ai_control.py](./scripts/vast_ai_control.py): Vast.ai REST API + SSH/rsync wrapper
-- [scripts/vast_ai_training_runner.py](./scripts/vast_ai_training_runner.py): remote bootstrap/smoke/full stage runner
+- [train/docs/vast_ai_preparation.md](./train/docs/vast_ai_preparation.md): Vast.ai operation notes
+- [train/training/dinov3_vast_plan.md](./train/training/dinov3_vast_plan.md): DINOv3 training and evaluation plan
+- [train/scripts/vast_ai_control.py](./train/scripts/vast_ai_control.py): Vast.ai REST API + SSH/rsync wrapper
+- [train/scripts/vast_ai_training_runner.py](./train/scripts/vast_ai_training_runner.py): remote bootstrap/smoke/full stage runner
 
 ### Training quick start
 
@@ -36,17 +36,17 @@ cd <repo-root>
 cp .env.example .env
 export $(grep -v '^#' .env | xargs)
 
-python3 scripts/vast_ai_control.py search --config configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml
-python3 scripts/vast_ai_control.py create --config configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml --attach-ssh
-python3 scripts/vast_ai_control.py wait --instance-id <INSTANCE_ID>
-python3 scripts/vast_ai_control.py ssh --instance-id <INSTANCE_ID>
+python3 train/scripts/vast_ai_control.py search --config train/configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml
+python3 train/scripts/vast_ai_control.py create --config train/configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml --attach-ssh
+python3 train/scripts/vast_ai_control.py wait --instance-id <INSTANCE_ID>
+python3 train/scripts/vast_ai_control.py ssh --instance-id <INSTANCE_ID>
 ```
 
 ### Training pipeline
 
 ```bash
-python3 training/prepare_snapshot.py --dry-run
-python3 training/build_pairs.py --manifest training/data/snapshot_manifest.csv --dry-run
-python3 scripts/vast_ai_training_runner.py print-command --stage bootstrap
-python3 scripts/vast_ai_training_runner.py print-command --stage smoke
+python3 train/training/prepare_snapshot.py --dry-run
+python3 train/training/build_pairs.py --manifest train/training/data/snapshot_manifest.csv --dry-run
+python3 train/scripts/vast_ai_training_runner.py print-command --stage bootstrap
+python3 train/scripts/vast_ai_training_runner.py print-command --stage smoke
 ```
