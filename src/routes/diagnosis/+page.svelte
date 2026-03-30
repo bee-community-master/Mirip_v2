@@ -34,6 +34,13 @@
 		icon: typeof Sparkles;
 		label: string;
 	}>;
+	const universityTabs = universityOptions.map((key) => ({
+		key,
+		label: diagnosisMock.universities[key].label
+	})) satisfies ReadonlyArray<{
+		key: UniversityKey;
+		label: string;
+	}>;
 	const tierOrder: Record<TierKey, number> = {
 		FREE: 0,
 		STANDARD: 1,
@@ -80,6 +87,18 @@
 			URL.revokeObjectURL(previewUrl);
 			previewUrl = null;
 		}
+	}
+
+	function selectTier(nextTier: TierKey) {
+		updateQuery({ tier: nextTier });
+	}
+
+	function selectUniversity(nextUniversity: UniversityKey) {
+		updateQuery({ uni: nextUniversity });
+	}
+
+	function selectExpertGuide(nextExpert: ExpertTab) {
+		updateQuery({ expert: nextExpert });
 	}
 
 	function clearTimer() {
@@ -232,7 +251,7 @@
 								}`}
 								aria-pressed={tier === option}
 								onclick={() => {
-									updateQuery({ tier: option as TierKey });
+									selectTier(option);
 								}}
 							>
 								{option}
@@ -401,20 +420,20 @@
 					<div class="relative">
 						<GlassCard className={`overflow-hidden rounded-[32px] ${!proUnlocked ? 'pointer-events-none select-none blur-md opacity-25' : ''}`}>
 							<div class="no-scrollbar flex overflow-x-auto border-b border-white/8">
-								{#each universityOptions as uni}
+								{#each universityTabs as universityTab}
 									<button
 										type="button"
 										class={`border-b-2 px-8 py-4 text-sm font-bold whitespace-nowrap transition-colors duration-200 ${
-											universityKey === uni
+											universityKey === universityTab.key
 												? 'border-fuchsia-400 bg-white/6 text-white'
 												: 'border-transparent text-white/45 hover:text-white'
 										}`}
-										aria-pressed={universityKey === uni}
+										aria-pressed={universityKey === universityTab.key}
 										onclick={() => {
-											updateQuery({ uni: uni as UniversityKey });
+											selectUniversity(universityTab.key);
 										}}
 									>
-										{diagnosisMock.universities[uni as UniversityKey].label}
+										{universityTab.label}
 									</button>
 								{/each}
 							</div>
@@ -555,7 +574,7 @@
 												}`}
 												aria-pressed={expertTab === tab.id}
 												onclick={() => {
-													updateQuery({ expert: tab.id as ExpertTab });
+													selectExpertGuide(tab.id);
 												}}
 											>
 												<span class="inline-flex items-center gap-2">
