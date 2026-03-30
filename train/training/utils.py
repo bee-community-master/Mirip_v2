@@ -23,6 +23,19 @@ def resolve_project_path(path: str | Path) -> Path:
     return (PROJECT_ROOT / candidate).resolve()
 
 
+def resolve_model_source(model_name: str) -> str:
+    expanded = Path(model_name).expanduser()
+    candidate = expanded if expanded.is_absolute() else resolve_project_path(expanded)
+    if not candidate.exists():
+        return model_name
+    if not candidate.is_dir():
+        raise ValueError(f"Local model source must be a directory: {candidate}")
+    config_path = candidate / "config.json"
+    if not config_path.exists():
+        raise ValueError(f"Local model source is missing config.json: {candidate}")
+    return str(candidate)
+
+
 def project_relative_path(path: str | Path) -> str:
     resolved = resolve_project_path(path)
     try:

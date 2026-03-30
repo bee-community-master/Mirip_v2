@@ -27,6 +27,14 @@ class DiagnosisJobRepository(Protocol):
         lease_until: datetime,
     ) -> DiagnosisJob | None: ...
 
+    async def lease_job(
+        self,
+        job_id: str,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> DiagnosisJob | None: ...
+
 
 class DiagnosisResultRepository(Protocol):
     async def create(self, result: DiagnosisResult) -> DiagnosisResult: ...

@@ -7,6 +7,10 @@ from datetime import UTC, datetime
 
 from mirip_backend.domain.competitions.entities import Competition
 from mirip_backend.infrastructure.auth.firebase.provider import FirebaseAuthService
+from mirip_backend.infrastructure.compute.service import (
+    ComputeEngineSpotVmLauncher,
+    DiagnosisVmLauncher,
+)
 from mirip_backend.infrastructure.config.settings import Settings
 from mirip_backend.infrastructure.firestore.client import (
     DocumentStore,
@@ -44,6 +48,7 @@ class ApplicationContainer:
     portfolio_repository: DocumentPortfolioRepository
     job_queue: JobQueueService
     health_reporter: HealthReporter
+    compute_launcher: DiagnosisVmLauncher | None
 
 
 async def _seed_memory_competitions(repository: DocumentCompetitionRepository) -> None:
@@ -100,6 +105,9 @@ async def build_container(settings: Settings) -> ApplicationContainer:
     storage_service = GCSStorageService(settings.gcs, backend=settings.storage_backend)
     health_reporter = HealthReporter(checks=[auth_service, storage_service])
     job_queue = JobQueueService(settings.job, diagnosis_job_repository)
+    compute_launcher = (
+        ComputeEngineSpotVmLauncher(settings.compute) if settings.compute.enabled else None
+    )
 
     return ApplicationContainer(
         settings=settings,
@@ -115,4 +123,5 @@ async def build_container(settings: Settings) -> ApplicationContainer:
         portfolio_repository=portfolio_repository,
         job_queue=job_queue,
         health_reporter=health_reporter,
+        compute_launcher=compute_launcher,
     )

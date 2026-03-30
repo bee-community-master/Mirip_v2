@@ -9,6 +9,7 @@ FastAPI backend scaffold for Mirip v2.
 - Firestore as the primary domain datastore
 - Google Cloud Storage for uploads and generated assets
 - Spot GPU worker for async diagnosis jobs
+- Spot VM worker orchestration for one-job-per-instance CPU ONNX inference
 
 ## Quick Start
 
@@ -61,6 +62,7 @@ Key settings are grouped around:
 - `MIRIP_GCS__*`
 - `MIRIP_JOB__*`
 - `MIRIP_WORKER__*`
+- `MIRIP_COMPUTE__*`
 - `MIRIP_OBSERVABILITY__*`
 
 See `src/mirip_backend/infrastructure/config/settings.py` for the full shape.
@@ -73,3 +75,7 @@ See `src/mirip_backend/infrastructure/config/settings.py` for the full shape.
   `GET /v1/profiles/me/portfolio-items` complete the editable profile flow.
 - Diagnosis jobs, competition submissions, and portfolio items now require uploads that have been
   explicitly completed.
+- Diagnosis jobs can launch a Spot VM from a Compute Engine instance template when
+  `MIRIP_COMPUTE__ENABLED=true` and `MIRIP_WORKER__MODE=cpu_onnx`.
+- CPU ONNX workers expect a serving bundle manifest and fail fast if the bundle does not include
+  diagnosis extras (`diagnosis_head`, `anchors`).

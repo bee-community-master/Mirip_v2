@@ -7,6 +7,11 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
+from mirip_backend.infrastructure.gcs.service import GCSStorageService
+from mirip_backend.worker.inference.model_bundle import (
+    MaterializedModelBundle,
+    materialize_model_bundle,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -22,22 +27,72 @@ class InferenceService(Protocol):
     async def evaluate(self, job: DiagnosisJob) -> InferenceOutput: ...
 
 
-class GpuInferenceService:
-    """Stub-orchestrated inference service for the worker process."""
+class NonRetryableInferenceError(RuntimeError):
+    """Raised when worker inference cannot succeed on a retry."""
 
-    def __init__(self, *, mode: str, model_uri: str | None) -> None:
+
+class WorkerInferenceService:
+    """Worker inference service for stub and CPU ONNX runtimes."""
+
+    def __init__(
+        self,
+        *,
+        mode: str,
+        model_uri: str | None,
+        storage_service: GCSStorageService,
+        local_model_cache_dir: str,
+    ) -> None:
         self._mode = mode
         self._model_uri = model_uri
+        self._storage_service = storage_service
+        self._local_model_cache_dir = local_model_cache_dir
         self._loaded = False
+        self._bundle: MaterializedModelBundle | None = None
+        self._session = None
 
     async def load(self) -> None:
         if self._loaded:
             return
-        # The real GPU path will attach the actual PyTorch / Transformers runtime.
+        if self._mode == "stub":
+            self._loaded = True
+            return
+        if self._mode != "cpu_onnx":
+            raise NonRetryableInferenceError(f"Unsupported worker mode: {self._mode}")
+        if not self._model_uri:
+            raise NonRetryableInferenceError(
+                "cpu_onnx worker mode requires MIRIP_WORKER__MODEL_URI"
+            )
+        try:
+            self._bundle = await materialize_model_bundle(
+                model_uri=self._model_uri,
+                storage_service=self._storage_service,
+                cache_dir=self._local_model_cache_dir,
+                require_diagnosis_extras=True,
+            )
+            self._session = self._build_onnx_session(self._bundle)
+        except NonRetryableInferenceError:
+            raise
+        except Exception as exc:
+            raise NonRetryableInferenceError("CPU ONNX model bundle initialization failed") from exc
         self._loaded = True
 
-    async def evaluate(self, job: DiagnosisJob) -> InferenceOutput:
-        await self.load()
+    @staticmethod
+    def _build_onnx_session(bundle: MaterializedModelBundle):  # type: ignore[no-untyped-def]
+        import onnxruntime as ort  # type: ignore[import-untyped]
+
+        session_options = ort.SessionOptions()
+        session_options.intra_op_num_threads = bundle.manifest.best_thread_count(bundle.local_dir)
+        session_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        session_options.add_session_config_entry("session.intra_op.allow_spinning", "1")
+        return ort.InferenceSession(
+            str(bundle.manifest.encoder_path(bundle.local_dir)),
+            sess_options=session_options,
+            providers=["CPUExecutionProvider"],
+        )
+
+    @staticmethod
+    def _build_stub_output(job: DiagnosisJob) -> InferenceOutput:
         digest = hashlib.sha256(job.id.encode("utf-8")).hexdigest()
         tier = ["S", "A", "B", "C"][int(digest[0], 16) % 4]
         base = 55.0 + (int(digest[1:3], 16) / 255.0) * 35.0
@@ -79,3 +134,18 @@ class GpuInferenceService:
             feedback=feedback,
             summary=summary,
         )
+
+    async def evaluate(self, job: DiagnosisJob) -> InferenceOutput:
+        await self.load()
+        if self._mode == "stub":
+            return self._build_stub_output(job)
+        if self._session is None or self._bundle is None:
+            raise NonRetryableInferenceError("CPU ONNX runtime failed to initialize")
+        raise NonRetryableInferenceError(
+            "CPU ONNX runtime loaded the serving bundle and initialized the encoder session, "
+            "but diagnosis-head execution is not implemented yet. Production cutover should "
+            "remain blocked until the diagnosis artifact contract is finalized."
+        )
+
+
+GpuInferenceService = WorkerInferenceService
