@@ -1,9 +1,14 @@
 <script lang="ts">
-	import { tick } from 'svelte';
 	import type { Snippet } from 'svelte';
 	import { fade, fly } from 'svelte/transition';
 	import { X } from 'lucide-svelte';
-	import { focusInitialElement, trapFocus } from '$lib/utils/focus';
+	import {
+		focusOverlayContainer,
+		getActiveElement,
+		handleOverlayKeydown,
+		lockBodyScroll,
+		restoreFocus
+	} from '$lib/utils/overlay';
 
 	let {
 		open,
@@ -25,39 +30,20 @@
 			return;
 		}
 
-		const previousOverflow = document.body.style.overflow;
-		previousFocusedElement =
-			document.activeElement instanceof HTMLElement ? document.activeElement : null;
-		document.body.style.overflow = 'hidden';
+		previousFocusedElement = getActiveElement();
+		const restoreScroll = lockBodyScroll();
 
-		void tick().then(() => {
-			if (panelElement) {
-				focusInitialElement(panelElement);
-			}
-		});
+		void focusOverlayContainer(panelElement);
 
 		return () => {
-			document.body.style.overflow = previousOverflow;
-			previousFocusedElement?.focus();
+			restoreScroll();
+			restoreFocus(previousFocusedElement);
 		};
 	});
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (!open) {
-			return;
-		}
-
-		if (event.key === 'Escape') {
-			event.preventDefault();
-			onClose();
-			return;
-		}
-
-		if (panelElement) {
-			trapFocus(panelElement, event);
-		}
+		handleOverlayKeydown({ open, container: panelElement, onClose }, event);
 	}
-
 </script>
 
 <svelte:window onkeydown={handleKeydown} />

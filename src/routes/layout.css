@@ -9,7 +9,6 @@
 		sans-serif;
 	--color-night-950: #050612;
 	--color-night-900: #080b18;
-	--color-night-850: #111527;
 	--color-night-800: #171c31;
 	--color-ice-100: #f6f7fb;
 	--color-ice-200: #dce3ff;
@@ -18,7 +17,6 @@
 	--color-azure-450: #41a1ff;
 	--color-emerald-450: #3fe2b4;
 	--color-gold-350: #f3d168;
-	--color-bronze-400: #ff9b54;
 }
 
 @layer base {
@@ -80,10 +78,6 @@
 
 	.glass-panel {
 		@apply border border-white/10 bg-white/6 shadow-[0_0_0_1px_rgba(255,255,255,0.02),0_24px_90px_rgba(6,8,20,0.55)] backdrop-blur-xl;
-	}
-
-	.glass-pill {
-		@apply border border-white/10 bg-white/6 backdrop-blur-md;
 	}
 
 	.page-title {
@@ -190,16 +184,6 @@
 
 	to {
 		transform: rotate(360deg);
-	}
-}
-
-@keyframes shimmer {
-	0% {
-		background-position: 200% 0;
-	}
-
-	100% {
-		background-position: -200% 0;
 	}
 }
 
