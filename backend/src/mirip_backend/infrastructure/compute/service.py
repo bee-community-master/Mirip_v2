@@ -68,6 +68,7 @@ class ComputeEngineSpotVmLauncher:
             {"key": "worker_mode", "value": worker_mode},
             {"key": "model_uri", "value": model_uri},
             {"key": "instance_name", "value": instance_name},
+            {"key": "zone", "value": self.settings.zone or ""},
         ]
         resource: dict[str, Any] = {
             "name": instance_name,

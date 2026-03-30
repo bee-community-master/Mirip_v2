@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 
 from train.serving.bundle import ServingBundleManifest, load_manifest, write_manifest
-from train.serving.pipeline import build_serving_bundle, choose_default_encoder
+from train.serving.pipeline import (
+    build_serving_bundle,
+    choose_default_encoder,
+    resolve_int8_tier_agreement,
+)
 from train.training.utils import resolve_model_source
 
 
@@ -95,11 +99,13 @@ class ServingBundleTests(unittest.TestCase):
                 export_source="local",
                 image_size=518,
                 quality_report={"int8_tier_agreement_vs_fp32": 0.0},
-                benchmarks={"encoder_fp32": {"latency_ms_p50": 100.0}},
+                benchmarks={"encoder_fp32": {"latency_ms_p50": 100.0, "thread_count": 8}},
             )
 
             self.assertEqual(decision.default_encoder, "encoder_fp32.onnx")
             self.assertNotIn("encoder_int8.onnx", manifest.files)
+            payload = json.loads((bundle_dir / "benchmarks.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["best_intra_op_num_threads"], 8)
             load_manifest(bundle_dir).validate(bundle_dir, require_diagnosis_extras=False)
 
     def test_resolve_model_source_accepts_local_export_directory(self) -> None:
@@ -118,6 +124,13 @@ class ServingBundleTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 resolve_model_source(str(model_dir))
+
+    def test_resolve_int8_tier_agreement_defaults_to_zero_without_validation_input(self) -> None:
+        self.assertEqual(resolve_int8_tier_agreement(None), 0.0)
+
+    def test_resolve_int8_tier_agreement_rejects_out_of_range_values(self) -> None:
+        with self.assertRaises(ValueError):
+            resolve_int8_tier_agreement(1.2)
 
 
 if __name__ == "__main__":

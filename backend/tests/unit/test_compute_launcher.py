@@ -48,4 +48,5 @@ def test_compute_launcher_builds_metadata_driven_instance_resource() -> None:
     assert metadata["worker_mode"] == "cpu_onnx"
     assert metadata["model_uri"] == "gs://mirip-v2-assets/models/vitl-bundle"
     assert metadata["instance_name"] == "mirip-diagnosis-job-demo"
+    assert metadata["zone"] == "asia-northeast3-b"
     assert resource["labels"]["mirip-managed"] == "true"

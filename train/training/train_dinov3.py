@@ -100,10 +100,12 @@ def main() -> int:
     set_seed(args.seed)
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
+    requested_model_name = args.model_name
     try:
-        resolved_model_name = resolve_model_source(args.model_name)
+        resolved_model_name = resolve_model_source(requested_model_name)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    args.model_name = resolved_model_name
 
     config = DinoV3TrainingConfig(
         model_name=resolved_model_name,
@@ -198,9 +200,9 @@ def main() -> int:
             else None,
         },
         "model_source": {
-            "requested": args.model_name,
+            "requested": requested_model_name,
             "resolved": resolved_model_name,
-            "is_local_export": resolved_model_name != args.model_name,
+            "is_local_export": resolved_model_name != requested_model_name,
         },
     }
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

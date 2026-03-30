@@ -17,6 +17,17 @@ class PromotionDecision:
     reason: str
 
 
+THREAD_SWEEP = (8, 12, 16)
+
+
+def resolve_int8_tier_agreement(raw_value: float | None) -> float:
+    if raw_value is None:
+        return 0.0
+    if 0.0 <= raw_value <= 1.0:
+        return raw_value
+    raise ValueError("--int8-tier-agreement must be between 0.0 and 1.0")
+
+
 def choose_default_encoder(
     quality_report: dict[str, Any],
     benchmarks: dict[str, Any],
@@ -71,6 +82,10 @@ def build_serving_bundle(
     bundle_path.mkdir(parents=True, exist_ok=True)
 
     decision = choose_default_encoder(quality_report, benchmarks)
+    benchmarks_payload = dict(benchmarks)
+    best_threads = _resolve_best_thread_count(decision.default_encoder, benchmarks_payload)
+    if best_threads is not None:
+        benchmarks_payload.setdefault("best_intra_op_num_threads", best_threads)
     files = {
         "encoder_fp32.onnx": "encoder_fp32.onnx",
         "preprocessor.json": "preprocessor.json",
@@ -100,10 +115,21 @@ def build_serving_bundle(
         extras=dict(diagnosis_extras or {}),
         metadata=metadata,
     )
-    write_json(bundle_path / "benchmarks.json", benchmarks)
+    write_json(bundle_path / "benchmarks.json", benchmarks_payload)
     write_json(bundle_path / "quality_report.json", quality_report)
     write_manifest(bundle_path, manifest)
     encoder_path = bundle_path / decision.default_encoder
     if encoder_path.exists():
         (bundle_path / "model_sha256.txt").write_text(sha256sum(encoder_path), encoding="utf-8")
     return manifest, decision
+
+
+def _resolve_best_thread_count(
+    default_encoder: str,
+    benchmarks: dict[str, Any],
+) -> int | None:
+    benchmark_key = default_encoder.removesuffix(".onnx")
+    candidate = benchmarks.get(benchmark_key, {}).get("thread_count")
+    if isinstance(candidate, (int, float)) and int(candidate) in THREAD_SWEEP:
+        return int(candidate)
+    return None

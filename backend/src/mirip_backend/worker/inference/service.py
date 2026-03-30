@@ -131,8 +131,9 @@ class WorkerInferenceService:
         if self._session is None or self._bundle is None:
             raise RuntimeError("CPU ONNX runtime failed to initialize")
         raise RuntimeError(
-            "CPU ONNX runtime loaded the serving bundle, but diagnosis execution requires a "
-            "published diagnosis_head/anchors artifact contract"
+            "CPU ONNX runtime loaded the serving bundle and initialized the encoder session, "
+            "but diagnosis-head execution is not implemented yet. Production cutover should "
+            "remain blocked until the diagnosis artifact contract is finalized."
         )
 
 

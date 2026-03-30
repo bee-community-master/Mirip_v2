@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ REQUIRED_FILES = (
 REQUIRED_DIAGNOSIS_EXTRAS = ("diagnosis_head", "anchors")
 THREAD_SWEEP = (8, 12, 16)
 DEFAULT_INTRA_OP_THREADS = 16
+CACHE_READY_SENTINEL = ".bundle_ready"
 
 
 @dataclass(slots=True, frozen=True)
@@ -76,6 +78,12 @@ class ModelBundleManifest:
         candidate = benchmarks.get("best_intra_op_num_threads")
         if isinstance(candidate, int) and candidate in THREAD_SWEEP:
             return candidate
+        candidate = benchmarks.get(
+            self.default_encoder.removesuffix(".onnx"),
+            {},
+        ).get("thread_count")
+        if isinstance(candidate, (int, float)) and int(candidate) in THREAD_SWEEP:
+            return int(candidate)
         return DEFAULT_INTRA_OP_THREADS
 
 
@@ -116,7 +124,9 @@ async def _resolve_local_bundle_dir(
     local_dir, is_cached = await asyncio.to_thread(_resolve_cached_bundle_dir, model_uri, cache_dir)
     if is_cached:
         return local_dir
+    await asyncio.to_thread(_reset_bundle_cache_dir, local_dir)
     await storage_service.download_tree(gcs_uri=model_uri, destination_dir=local_dir)
+    await asyncio.to_thread(_mark_bundle_cache_ready, local_dir)
     return local_dir
 
 
@@ -131,4 +141,14 @@ def _resolve_cached_bundle_dir(model_uri: str, cache_dir: str | Path) -> tuple[P
     cache_root = Path(cache_dir)
     digest = hashlib.sha256(model_uri.encode("utf-8")).hexdigest()[:16]
     local_dir = cache_root / digest
-    return local_dir, (local_dir / "manifest.json").exists()
+    return local_dir, (local_dir / CACHE_READY_SENTINEL).exists()
+
+
+def _reset_bundle_cache_dir(local_dir: Path) -> None:
+    if local_dir.exists():
+        shutil.rmtree(local_dir)
+
+
+def _mark_bundle_cache_ready(local_dir: Path) -> None:
+    local_dir.mkdir(parents=True, exist_ok=True)
+    (local_dir / CACHE_READY_SENTINEL).write_text("ready\n", encoding="utf-8")

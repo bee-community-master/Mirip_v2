@@ -92,10 +92,14 @@ class GCSStorageService:
     async def download_tree(self, *, gcs_uri: str, destination_dir: str | Path) -> list[Path]:
         if not gcs_uri.startswith("gs://"):
             raise ValueError(f"Unsupported GCS URI: {gcs_uri}")
+        bucket_name, prefix = self._split_gs_uri(gcs_uri)
+        if not bucket_name or not prefix:
+            raise ValueError(
+                "GCS model bundle URI must include both a bucket and an object prefix"
+            )
         if self.backend == "fake":
             raise DependencyError("GCS download is unavailable when storage backend is fake")
 
-        bucket_name, prefix = self._split_gs_uri(gcs_uri)
         destination = Path(destination_dir)
 
         def _download() -> list[Path]:

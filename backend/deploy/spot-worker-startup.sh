@@ -25,6 +25,7 @@ metadata() {
   echo "MIRIP_WORKER__MODE=$(metadata worker_mode)"
   echo "MIRIP_WORKER__MODEL_URI=$(metadata model_uri)"
   echo "MIRIP_COMPUTE__INSTANCE_NAME=$(metadata instance_name)"
+  echo "MIRIP_COMPUTE__ZONE=$(metadata zone)"
 } > "${GENERATED_ENV_FILE}"
 
 docker pull "${IMAGE_URI}"

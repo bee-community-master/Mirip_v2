@@ -193,6 +193,14 @@ class DocumentDiagnosisJobRepository:
         worker_id: str,
         lease_until: datetime,
     ) -> DiagnosisJob | None:
+        if isinstance(self._store, FirestoreDocumentStore):
+            return await asyncio.to_thread(
+                self._lease_job_firestore,
+                job_id,
+                worker_id,
+                lease_until,
+            )
+
         job = await self.get(job_id)
         if job is None:
             return None
@@ -200,6 +208,40 @@ class DocumentDiagnosisJobRepository:
             return None
         leased = self._build_leased_job(job, worker_id=worker_id, lease_until=lease_until)
         return await self.update(leased)
+
+    def _lease_job_firestore(
+        self,
+        job_id: str,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> DiagnosisJob | None:
+        from google.cloud import firestore
+
+        store = cast(FirestoreDocumentStore, self._store)
+        client = store._client()
+        transaction = client.transaction()
+        now = utc_now()
+
+        @firestore.transactional
+        def _claim(tx: Any) -> DiagnosisJob | None:
+            snapshot = client.collection(self.COLLECTION).document(job_id).get(transaction=tx)
+            if not snapshot.exists:
+                return None
+            doc = snapshot.to_dict()
+            if doc is None:
+                return None
+            job = self._to_entity(doc)
+            if not self._is_lease_candidate(job, now=now):
+                return None
+            leased = self._build_leased_job(
+                job,
+                worker_id=worker_id,
+                lease_until=lease_until,
+            )
+            tx.update(snapshot.reference, _serialize(asdict(leased)))
+            return leased
+
+        return cast(DiagnosisJob | None, _claim(transaction))
 
     def _lease_next_ready_job_firestore(
         self,
