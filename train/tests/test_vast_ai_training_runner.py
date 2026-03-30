@@ -79,6 +79,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
         self.assertIn("--postprocess-registry output_models/logs/dinov3_vit7b16_postprocess_registry.json", command)
         self.assertIn("--postprocess-report output_models/logs/dinov3_vit7b16_full_candidate.json", command)
+        self.assertIn("--postprocess-best-checkpoint output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt", command)
+        self.assertIn("--postprocess-best-report output_models/logs/dinov3_vit7b16_smoke.json", command)
         self.assertIn("dinov3_vit7b16_postprocess_registry.json", command)
         self.assertIn("dinov3_vit7b16_full.json", command)
 

@@ -93,6 +93,8 @@ def run_postprocess_for_checkpoint(
     anchors_output: str | Path,
     report_output: str | Path,
     registry_output: str | Path,
+    best_checkpoint: str | Path | None = None,
+    best_report: str | Path | None = None,
     batch_size: int,
     num_workers: int,
     prefetch_factor: int,
@@ -148,6 +150,8 @@ def run_postprocess_for_checkpoint(
         current_checkpoint=checkpoint_path,
         current_report=report_path,
         output_registry=registry_output,
+        best_checkpoint=best_checkpoint,
+        best_report=best_report,
     )
     return {
         "report": payload,

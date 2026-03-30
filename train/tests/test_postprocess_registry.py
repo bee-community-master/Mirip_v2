@@ -99,6 +99,60 @@ class PostprocessRegistryTests(unittest.TestCase):
             self.assertEqual(payload["decision"]["criterion"], "anchor_tier_accuracy")
             self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
 
+    def test_fallback_best_report_is_used_when_registry_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            candidate_report = base / "candidate.json"
+            fallback_report = base / "smoke.json"
+            registry_path = base / "registry.json"
+
+            candidate_report.write_text(
+                json.dumps(
+                    {
+                        "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0001.pt",
+                        "metrics": {
+                            "anchor_tier_accuracy": 0.49,
+                            "val_accuracy": 0.70,
+                            "same_dept_accuracy": 0.71,
+                            "val_loss": 0.22,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fallback_report.write_text(
+                json.dumps(
+                    {
+                        "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
+                        "metrics": {
+                            "anchor_tier_accuracy": 0.51,
+                            "val_accuracy": 0.69,
+                            "same_dept_accuracy": 0.72,
+                            "val_loss": 0.21,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = update_postprocess_registry(
+                current_checkpoint="output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0001.pt",
+                current_report=candidate_report,
+                output_registry=registry_path,
+                best_checkpoint="output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
+                best_report=fallback_report,
+            )
+
+            self.assertEqual(
+                payload["current_best_checkpoint_before_compare"],
+                "output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
+            )
+            self.assertEqual(
+                payload["selected_best_checkpoint_after_compare"],
+                "output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
+            )
+            self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
+
 
 if __name__ == "__main__":
     unittest.main()

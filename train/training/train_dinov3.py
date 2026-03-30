@@ -62,6 +62,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--postprocess-anchors-output")
     parser.add_argument("--postprocess-report")
     parser.add_argument("--postprocess-registry")
+    parser.add_argument("--postprocess-best-checkpoint")
+    parser.add_argument("--postprocess-best-report")
     return parser.parse_args()
 
 
@@ -79,6 +81,11 @@ def resolve_postprocess_kwargs(
         )
     if not provided_names:
         return None
+    if bool(args.postprocess_best_checkpoint) != bool(args.postprocess_best_report):
+        raise SystemExit(
+            "Postprocess incumbent arguments must be provided together. "
+            "Missing one of: postprocess_best_checkpoint, postprocess_best_report"
+        )
     return {
         "pairs_val": args.pairs_val,
         "metadata_train": args.postprocess_metadata_train,
@@ -87,6 +94,8 @@ def resolve_postprocess_kwargs(
         "anchors_output": args.postprocess_anchors_output,
         "report_output": args.postprocess_report,
         "registry_output": args.postprocess_registry,
+        "best_checkpoint": args.postprocess_best_checkpoint,
+        "best_report": args.postprocess_best_report,
         "batch_size": config.batch_size,
         "num_workers": config.num_workers,
         "prefetch_factor": config.prefetch_factor,

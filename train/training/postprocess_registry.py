@@ -126,25 +126,22 @@ def load_existing_best(
     best_checkpoint: str | Path | None = None,
     best_report: str | Path | None = None,
 ) -> PostprocessRecord | None:
+    registry_file = resolve_project_path(registry_path)
+    if registry_file.exists():
+        payload = read_json(registry_file)
+        checkpoint_relative = payload.get("selected_best_checkpoint_after_compare")
+        report_relative = payload.get("selected_best_report_after_compare")
+        metrics = payload.get("selected_best_metrics_after_compare")
+        if checkpoint_relative and report_relative and isinstance(metrics, dict):
+            return PostprocessRecord(
+                checkpoint_relative=checkpoint_relative,
+                report_relative=report_relative,
+                metrics=metrics,
+            )
+
     if best_report:
         return load_report_record(best_checkpoint, best_report)
-
-    registry_file = resolve_project_path(registry_path)
-    if not registry_file.exists():
-        return None
-
-    payload = read_json(registry_file)
-    checkpoint_relative = payload.get("selected_best_checkpoint_after_compare")
-    report_relative = payload.get("selected_best_report_after_compare")
-    metrics = payload.get("selected_best_metrics_after_compare")
-    if not checkpoint_relative or not report_relative or not isinstance(metrics, dict):
-        return None
-
-    return PostprocessRecord(
-        checkpoint_relative=checkpoint_relative,
-        report_relative=report_relative,
-        metrics=metrics,
-    )
+    return None
 
 
 def choose_best_record(
