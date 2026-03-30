@@ -52,25 +52,40 @@ class CreateDiagnosisJobUseCase:
         actor: AuthenticatedUser,
         command: CreateDiagnosisJobCommand,
     ) -> DiagnosisJob:
+        self._validate_command(command)
+        await self._ensure_uploads_ready(actor=actor, upload_ids=command.upload_ids)
+        created = await self._job_repository.create(self._build_job(actor=actor, command=command))
+        return await self._launch_worker_vm(created)
+
+    def _validate_command(self, command: CreateDiagnosisJobCommand) -> None:
         if not command.upload_ids:
             raise ValidationError("At least one upload is required")
         if command.job_type == "compare" and len(command.upload_ids) < 2:
             raise ValidationError("Compare jobs require at least two uploads")
 
-        for upload_id in command.upload_ids:
+    async def _ensure_uploads_ready(
+        self,
+        *,
+        actor: AuthenticatedUser,
+        upload_ids: list[str],
+    ) -> None:
+        for upload_id in upload_ids:
             upload = await load_owned_upload(
                 upload_repository=self._upload_repository,
                 actor=actor,
                 upload_id=upload_id,
                 not_found_message=f"Upload {upload_id} does not exist",
             )
-            require_uploaded_asset(
-                upload,
-                message="Diagnosis jobs require uploaded assets",
-            )
+            require_uploaded_asset(upload, message="Diagnosis jobs require uploaded assets")
 
+    def _build_job(
+        self,
+        *,
+        actor: AuthenticatedUser,
+        command: CreateDiagnosisJobCommand,
+    ) -> DiagnosisJob:
         now = utc_now()
-        job = DiagnosisJob(
+        return DiagnosisJob(
             id=new_id("job"),
             user_id=actor.user_id,
             upload_ids=command.upload_ids,
@@ -84,31 +99,21 @@ class CreateDiagnosisJobUseCase:
             updated_at=now,
             metadata={"requested_upload_count": str(len(command.upload_ids))},
         )
-        created = await self._job_repository.create(job)
-        return await self._launch_worker_vm(created)
 
     async def _launch_worker_vm(self, job: DiagnosisJob) -> DiagnosisJob:
         if self._worker_mode == "stub":
             return job
         if self._vm_launcher is None:
             if self._worker_mode == "cpu_onnx":
-                return await self._job_repository.update(
-                    replace(
-                        job,
-                        status=JobStatus.FAILED,
-                        failure_reason="Worker VM launcher is not configured",
-                        updated_at=utc_now(),
-                    )
+                return await self._fail_job(
+                    job,
+                    reason="Worker VM launcher is not configured",
                 )
             return job
         if not self._worker_model_uri:
-            return await self._job_repository.update(
-                replace(
-                    job,
-                    status=JobStatus.FAILED,
-                    failure_reason="Worker model bundle URI is not configured",
-                    updated_at=utc_now(),
-                )
+            return await self._fail_job(
+                job,
+                reason="Worker model bundle URI is not configured",
             )
         try:
             launch = await self._vm_launcher.launch_for_job(
@@ -117,20 +122,23 @@ class CreateDiagnosisJobUseCase:
                 worker_mode=self._worker_mode,
             )
         except DependencyError:
-            return await self._job_repository.update(
-                replace(
-                    job,
-                    status=JobStatus.FAILED,
-                    failure_reason="Worker VM launch failed",
-                    updated_at=utc_now(),
-                )
-            )
+            return await self._fail_job(job, reason="Worker VM launch failed")
         metadata = dict(job.metadata)
         metadata.update(launch.metadata_patch())
         return await self._job_repository.update(
             replace(
                 job,
                 metadata=metadata,
+                updated_at=utc_now(),
+            )
+        )
+
+    async def _fail_job(self, job: DiagnosisJob, *, reason: str) -> DiagnosisJob:
+        return await self._job_repository.update(
+            replace(
+                job,
+                status=JobStatus.FAILED,
+                failure_reason=reason,
                 updated_at=utc_now(),
             )
         )

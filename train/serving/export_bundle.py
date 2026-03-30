@@ -39,6 +39,15 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _validate_export_args(args: argparse.Namespace, backbone_dir: Path) -> None:
+    if not backbone_dir.exists():
+        raise SystemExit(f"Backbone export directory does not exist: {backbone_dir}")
+    if not (backbone_dir / "config.json").exists():
+        raise SystemExit(f"Backbone export directory is missing config.json: {backbone_dir}")
+    if args.skip_int8 and args.int8_tier_agreement is not None:
+        raise SystemExit("--int8-tier-agreement cannot be used with --skip-int8")
+
+
 def _export_fp32_encoder(backbone_dir: Path, output_path: Path, image_size: int) -> None:
     from transformers import AutoModel
 
@@ -130,41 +139,69 @@ def _benchmark_thread_sweep(
     return dict(best), runs
 
 
+def _write_preprocessor_file(backbone_dir: Path, bundle_dir: Path, image_size: int) -> None:
+    source_path = backbone_dir / "preprocessor_config.json"
+    target_path = bundle_dir / "preprocessor.json"
+    if source_path.exists():
+        shutil.copy2(source_path, target_path)
+        return
+    write_json(target_path, {"image_size": image_size})
+
+
+def _build_benchmark_payload(fp32_path: Path, image_size: int) -> dict[str, Any]:
+    fp32_best, fp32_sweep = _benchmark_thread_sweep(fp32_path, image_size)
+    return {
+        "encoder_fp32": fp32_best,
+        "encoder_fp32_thread_sweep": fp32_sweep,
+    }
+
+
+def _build_quality_report(
+    *,
+    backbone_dir: Path,
+    int8_tier_agreement: float | None,
+) -> dict[str, Any]:
+    return {
+        "int8_tier_agreement_vs_fp32": resolve_int8_tier_agreement(int8_tier_agreement),
+        "export_source": str(backbone_dir),
+    }
+
+
+def _maybe_add_int8_benchmarks(
+    *,
+    bundle_dir: Path,
+    image_size: int,
+    benchmarks: dict[str, Any],
+) -> None:
+    int8_path = bundle_dir / "encoder_int8.onnx"
+    _quantize_int8(bundle_dir / "encoder_fp32.onnx", int8_path)
+    int8_best, int8_sweep = _benchmark_thread_sweep(int8_path, image_size)
+    benchmarks["encoder_int8"] = int8_best
+    benchmarks["encoder_int8_thread_sweep"] = int8_sweep
+
+
 def main() -> int:
     args = _parse_args()
     backbone_dir = resolve_project_path(args.backbone_dir)
     bundle_dir = resolve_project_path(args.bundle_dir)
     bundle_dir.mkdir(parents=True, exist_ok=True)
-
-    if not backbone_dir.exists():
-        raise SystemExit(f"Backbone export directory does not exist: {backbone_dir}")
-    if not (backbone_dir / "config.json").exists():
-        raise SystemExit(f"Backbone export directory is missing config.json: {backbone_dir}")
-    if args.skip_int8 and args.int8_tier_agreement is not None:
-        raise SystemExit("--int8-tier-agreement cannot be used with --skip-int8")
-
-    shutil.copy2(backbone_dir / "preprocessor_config.json", bundle_dir / "preprocessor.json") if (backbone_dir / "preprocessor_config.json").exists() else write_json(bundle_dir / "preprocessor.json", {"image_size": args.image_size})
+    _validate_export_args(args, backbone_dir)
+    _write_preprocessor_file(backbone_dir, bundle_dir, args.image_size)
 
     fp32_path = bundle_dir / "encoder_fp32.onnx"
     _export_fp32_encoder(backbone_dir, fp32_path, args.image_size)
 
-    fp32_best, fp32_sweep = _benchmark_thread_sweep(fp32_path, args.image_size)
-    benchmarks: dict[str, Any] = {
-        "encoder_fp32": fp32_best,
-        "encoder_fp32_thread_sweep": fp32_sweep,
-    }
-    quality_report = {
-        "int8_tier_agreement_vs_fp32": resolve_int8_tier_agreement(
-            args.int8_tier_agreement
-        ),
-        "export_source": str(backbone_dir),
-    }
+    benchmarks = _build_benchmark_payload(fp32_path, args.image_size)
+    quality_report = _build_quality_report(
+        backbone_dir=backbone_dir,
+        int8_tier_agreement=args.int8_tier_agreement,
+    )
     if not args.skip_int8:
-        int8_path = bundle_dir / "encoder_int8.onnx"
-        _quantize_int8(fp32_path, int8_path)
-        int8_best, int8_sweep = _benchmark_thread_sweep(int8_path, args.image_size)
-        benchmarks["encoder_int8"] = int8_best
-        benchmarks["encoder_int8_thread_sweep"] = int8_sweep
+        _maybe_add_int8_benchmarks(
+            bundle_dir=bundle_dir,
+            image_size=args.image_size,
+            benchmarks=benchmarks,
+        )
 
     manifest, decision = build_serving_bundle(
         bundle_dir=bundle_dir,
