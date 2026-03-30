@@ -24,11 +24,13 @@
 	import SectionHeading from '$lib/components/SectionHeading.svelte';
 	import { mapDiagnosisResult } from '$lib/diagnosis/adapter';
 	import { transitionDiagnosisStage, type DiagnosisStage } from '$lib/diagnosis/flow';
+	import {
+		diagnosisPollIntervalInMs,
+		getDiagnosisFailureMessage,
+		getDiagnosisJobStatusLabel,
+		validateDiagnosisFile
+	} from '$lib/diagnosis/logic';
 	import type { DiagnosisResultView } from '$lib/types';
-
-	const validImageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
-	const maxUploadSizeInBytes = 10 * 1024 * 1024;
-	const pollIntervalInMs = 2500;
 
 	let stage = $state<DiagnosisStage>('upload');
 	let selectedFile = $state<File | null>(null);
@@ -40,7 +42,7 @@
 	let statusMessage = $state('');
 	let pollCount = $state(0);
 	let pollTimer: ReturnType<typeof setTimeout> | null = null;
-	let activeRunId = $state(0);
+	let activeRunId = 0;
 	let isDestroyed = false;
 
 	const currentTier = $derived(diagnosisResult?.tier ?? null);
@@ -103,35 +105,6 @@
 		return '진단 요청 중 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.';
 	}
 
-	function validateFile(file: File) {
-		if (!validImageTypes.includes(file.type)) {
-			throw new Error('PNG, JPG, JPEG, WebP 형식의 이미지만 업로드할 수 있습니다.');
-		}
-
-		if (file.size > maxUploadSizeInBytes) {
-			throw new Error('파일 크기는 10 MB 이하로 올려주세요.');
-		}
-	}
-
-	function getJobStatusLabel(status: string) {
-		switch (status) {
-			case 'queued':
-				return '대기 중';
-			case 'leased':
-				return '워커 할당 중';
-			case 'running':
-				return '분석 중';
-			case 'succeeded':
-				return '완료';
-			case 'failed':
-				return '실패';
-			case 'expired':
-				return '만료';
-			default:
-				return status;
-		}
-	}
-
 	async function pollDiagnosisJob(jobId: string, runId: number) {
 		clearPollingTimer();
 
@@ -157,17 +130,15 @@
 			}
 
 			if (response.job.status === 'failed' || response.job.status === 'expired') {
-				error =
-					response.job.failure_reason ??
-					'진단 작업이 완료되지 않았습니다. 로컬 worker 로그를 확인해 주세요.';
+				error = getDiagnosisFailureMessage(response.job);
 				statusMessage = '';
 				return;
 			}
 
-			statusMessage = `${getJobStatusLabel(response.job.status)} 상태입니다. 결과가 준비되면 자동으로 갱신됩니다.`;
+			statusMessage = `${getDiagnosisJobStatusLabel(response.job.status)} 상태입니다. 결과가 준비되면 자동으로 갱신됩니다.`;
 			pollTimer = setTimeout(() => {
 				void pollDiagnosisJob(jobId, runId);
-			}, pollIntervalInMs);
+			}, diagnosisPollIntervalInMs);
 		} catch (caughtError) {
 			if (!isRunActive(runId)) {
 				return;
@@ -181,7 +152,7 @@
 
 	async function beginAnalysis(file: File) {
 		try {
-			validateFile(file);
+			validateDiagnosisFile(file);
 		} catch (caughtError) {
 			error = extractErrorMessage(caughtError);
 			stage = 'upload';
@@ -362,7 +333,7 @@
 								<div class="rounded-[22px] border border-white/8 bg-white/[0.03] p-4">
 									<div class="text-xs font-bold uppercase tracking-[0.24em] text-white/35">Status</div>
 									<div class="mt-2 text-sm font-medium text-white/78">
-										{getJobStatusLabel(currentJob.status)}
+										{getDiagnosisJobStatusLabel(currentJob.status)}
 									</div>
 								</div>
 							</div>
