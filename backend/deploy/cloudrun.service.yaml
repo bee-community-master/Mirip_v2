@@ -1,0 +1,29 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: mirip-v2-api
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/execution-environment: gen2
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "10"
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 60
+      containers:
+        - image: REGION-docker.pkg.dev/PROJECT_ID/mirip/mirip-v2-api:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: MIRIP_APP_ENV
+              value: "prod"
+            - name: MIRIP_DATA_BACKEND
+              value: "firestore"
+            - name: MIRIP_STORAGE_BACKEND
+              value: "gcs"
+            - name: MIRIP_FIREBASE__PROJECT_ID
+              value: "PROJECT_ID"
+            - name: MIRIP_GCS__BUCKET_NAME
+              value: "mirip-v2-assets"

@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "mirip-backend"
+version = "0.1.0"
+description = "Mirip v2 backend scaffold for Cloud Run and GPU worker orchestration"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [
+  { name = "Mirip Team" }
+]
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "uvicorn[standard]>=0.32.0,<1.0.0",
+  "pydantic>=2.10.0,<3.0.0",
+  "pydantic-settings>=2.7.0,<3.0.0",
+  "structlog>=24.4.0,<25.0.0",
+  "python-multipart>=0.0.18,<1.0.0",
+  "orjson>=3.10.0,<4.0.0",
+  "firebase-admin>=6.6.0,<7.0.0",
+  "google-cloud-firestore>=2.19.0,<3.0.0",
+  "google-cloud-storage>=2.18.0,<3.0.0",
+  "tenacity>=9.0.0,<10.0.0",
+]
+
+[project.optional-dependencies]
+worker = [
+  "pillow>=10.4.0,<11.0.0",
+  "torch>=2.6.0,<3.0.0",
+  "transformers>=4.51.0,<5.0.0",
+]
+
+[dependency-groups]
+dev = [
+  "asgi-lifespan>=2.1.0,<3.0.0",
+  "httpx>=0.28.0,<1.0.0",
+  "mypy>=1.14.0,<2.0.0",
+  "pytest>=8.3.0,<9.0.0",
+  "pytest-asyncio>=0.24.0,<1.0.0",
+  "ruff>=0.8.0,<1.0.0",
+]
+
+[project.scripts]
+mirip-api = "mirip_backend.api.app:run"
+mirip-worker = "mirip_backend.worker.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mirip_backend"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "ASYNC"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = []
+packages = ["mirip_backend"]
+
+[[tool.mypy.overrides]]
+module = ["firebase_admin", "firebase_admin.*", "google.cloud", "google.cloud.*"]
+ignore_missing_imports = true
