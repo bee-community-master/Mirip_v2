@@ -13,6 +13,7 @@ from mirip_backend.api.schemas.diagnosis import (
     DiagnosisJobStatusResponse,
     DiagnosisResultResponse,
 )
+from mirip_backend.domain.diagnosis.entities import DiagnosisJob, DiagnosisResult
 from mirip_backend.usecases.diagnosis.create_job import (
     CreateDiagnosisJobCommand,
     CreateDiagnosisJobUseCase,
@@ -21,6 +22,33 @@ from mirip_backend.usecases.diagnosis.get_job_status import GetDiagnosisJobStatu
 from mirip_backend.usecases.diagnosis.list_history import ListDiagnosisHistoryUseCase
 
 router = APIRouter(prefix="/v1/diagnosis", tags=["diagnosis"])
+
+
+def _to_job_response(job: DiagnosisJob) -> DiagnosisJobResponse:
+    return DiagnosisJobResponse(
+        id=job.id,
+        job_type=job.job_type,
+        department=job.department,
+        status=job.status.value,
+        upload_ids=job.upload_ids,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        attempts=job.attempts,
+        failure_reason=job.failure_reason,
+    )
+
+
+def _to_result_response(result: DiagnosisResult) -> DiagnosisResultResponse:
+    return DiagnosisResultResponse(
+        id=result.id,
+        job_id=result.job_id,
+        tier=result.tier,
+        scores=result.scores,
+        probabilities=result.probabilities,
+        feedback=result.feedback,
+        summary=result.summary,
+        created_at=result.created_at,
+    )
 
 
 @router.post("/jobs", response_model=DiagnosisJobResponse, status_code=status.HTTP_201_CREATED)
@@ -44,17 +72,7 @@ async def create_job(
             language=payload.language,
         ),
     )
-    return DiagnosisJobResponse(
-        id=job.id,
-        job_type=job.job_type,
-        department=job.department,
-        status=job.status.value,
-        upload_ids=job.upload_ids,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        attempts=job.attempts,
-        failure_reason=job.failure_reason,
-    )
+    return _to_job_response(job)
 
 
 @router.get("/jobs/{job_id}", response_model=DiagnosisJobStatusResponse)
@@ -68,30 +86,9 @@ async def get_job_status(
         result_repository=container.diagnosis_result_repository,
     )
     view = await usecase.execute(actor=current_user, job_id=job_id)
-    result = None
-    if view.result is not None:
-        result = DiagnosisResultResponse(
-            id=view.result.id,
-            job_id=view.result.job_id,
-            tier=view.result.tier,
-            scores=view.result.scores,
-            probabilities=view.result.probabilities,
-            feedback=view.result.feedback,
-            summary=view.result.summary,
-            created_at=view.result.created_at,
-        )
+    result = _to_result_response(view.result) if view.result is not None else None
     return DiagnosisJobStatusResponse(
-        job=DiagnosisJobResponse(
-            id=view.job.id,
-            job_type=view.job.job_type,
-            department=view.job.department,
-            status=view.job.status.value,
-            upload_ids=view.job.upload_ids,
-            created_at=view.job.created_at,
-            updated_at=view.job.updated_at,
-            attempts=view.job.attempts,
-            failure_reason=view.job.failure_reason,
-        ),
+        job=_to_job_response(view.job),
         result=result,
     )
 
@@ -106,19 +103,7 @@ async def get_history(
     usecase = ListDiagnosisHistoryUseCase(container.diagnosis_result_repository)
     page = await usecase.execute(actor=current_user, limit=limit, offset=offset)
     return DiagnosisHistoryResponse(
-        items=[
-            DiagnosisResultResponse(
-                id=item.id,
-                job_id=item.job_id,
-                tier=item.tier,
-                scores=item.scores,
-                probabilities=item.probabilities,
-                feedback=item.feedback,
-                summary=item.summary,
-                created_at=item.created_at,
-            )
-            for item in page.items
-        ],
+        items=[_to_result_response(item) for item in page.items],
         total=page.total,
         limit=page.limit,
         offset=page.offset,

@@ -115,6 +115,30 @@ class DocumentDiagnosisJobRepository:
             metadata=dict(doc.get("metadata", {})),
         )
 
+    def _is_lease_candidate(self, job: DiagnosisJob, *, now: datetime) -> bool:
+        lease_expired = job.lease_expires_at is not None and job.lease_expires_at <= now
+        return job.status in {JobStatus.QUEUED, JobStatus.EXPIRED} or (
+            job.status in {JobStatus.LEASED, JobStatus.RUNNING} and lease_expired
+        )
+
+    def _build_leased_job(
+        self,
+        job: DiagnosisJob,
+        *,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> DiagnosisJob:
+        return DiagnosisJob(
+            **{
+                **asdict(job),
+                "status": JobStatus.LEASED,
+                "lease_owner": worker_id,
+                "lease_expires_at": lease_until,
+                "attempts": job.attempts + 1,
+                "updated_at": lease_until,
+            }
+        )
+
     async def update(self, job: DiagnosisJob) -> DiagnosisJob:
         await self._store.put(self.COLLECTION, job.id, _serialize(asdict(job)))
         return job
@@ -150,21 +174,9 @@ class DocumentDiagnosisJobRepository:
             job = await self.get(str(doc["id"]))
             if job is None:
                 continue
-            lease_expired = job.lease_expires_at is not None and job.lease_expires_at <= now
-            if job.status not in {JobStatus.QUEUED, JobStatus.EXPIRED} and not (
-                job.status in {JobStatus.LEASED, JobStatus.RUNNING} and lease_expired
-            ):
+            if not self._is_lease_candidate(job, now=now):
                 continue
-            leased = DiagnosisJob(
-                **{
-                    **asdict(job),
-                    "status": JobStatus.LEASED,
-                    "lease_owner": worker_id,
-                    "lease_expires_at": lease_until,
-                    "attempts": job.attempts + 1,
-                    "updated_at": lease_until,
-                }
-            )
+            leased = self._build_leased_job(job, worker_id=worker_id, lease_until=lease_until)
             await self.update(leased)
             return leased
         return None
@@ -189,20 +201,12 @@ class DocumentDiagnosisJobRepository:
                 if doc is None:
                     continue
                 job = self._to_entity(doc)
-                lease_expired = job.lease_expires_at is not None and job.lease_expires_at <= now
-                if job.status not in {JobStatus.QUEUED, JobStatus.EXPIRED} and not (
-                    job.status in {JobStatus.LEASED, JobStatus.RUNNING} and lease_expired
-                ):
+                if not self._is_lease_candidate(job, now=now):
                     continue
-                leased = DiagnosisJob(
-                    **{
-                        **asdict(job),
-                        "status": JobStatus.LEASED,
-                        "lease_owner": worker_id,
-                        "lease_expires_at": lease_until,
-                        "attempts": job.attempts + 1,
-                        "updated_at": lease_until,
-                    }
+                leased = self._build_leased_job(
+                    job,
+                    worker_id=worker_id,
+                    lease_until=lease_until,
                 )
                 tx.update(snapshot.reference, _serialize(asdict(leased)))
                 return leased
