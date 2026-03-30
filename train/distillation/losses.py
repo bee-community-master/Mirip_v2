@@ -53,7 +53,12 @@ class RelationalPatchLoss(nn.Module):
             return student_patch.new_zeros(())
         sample_size = min(self.sample_size, patch_count)
         if sample_size < patch_count:
-            indices = torch.randperm(patch_count, device=student_patch.device)[:sample_size]
+            indices = torch.linspace(
+                0,
+                patch_count - 1,
+                steps=sample_size,
+                device=student_patch.device,
+            ).round().long().unique()
             student_patch = student_patch.index_select(1, indices)
             teacher_patch = teacher_patch.index_select(1, indices)
         student_norm = _normalize(student_patch)
@@ -111,9 +116,17 @@ class LossBreakdown:
 class DistillationLossBundle(nn.Module):
     """Computes the weighted distillation objective."""
 
-    def __init__(self, weights: LossWeights, *, patch_loss_type: str = "cosine", rel_patch_sample_size: int = 128) -> None:
+    def __init__(
+        self,
+        weights: LossWeights,
+        *,
+        patch_loss_type: str = "cosine",
+        rel_patch_sample_size: int = 128,
+        use_relational_loss: bool = True,
+    ) -> None:
         super().__init__()
         self.weights = weights
+        self.use_relational_loss = use_relational_loss
         self.patch_loss = PatchTokenDistillationLoss(loss_type=patch_loss_type)
         self.rel_loss = RelationalPatchLoss(sample_size=rel_patch_sample_size)
         self.cls_loss = ClsTokenDistillationLoss()
@@ -133,7 +146,7 @@ class DistillationLossBundle(nn.Module):
         teacher_mid: list[torch.Tensor],
     ) -> LossBreakdown:
         patch = self.patch_loss(student_patch, teacher_patch)
-        rel = self.rel_loss(student_patch, teacher_patch)
+        rel = self.rel_loss(student_patch, teacher_patch) if self.use_relational_loss else student_patch.new_zeros(())
         cls = self.cls_loss(student_cls, teacher_cls)
         pool = self.pool_loss(student_pool, teacher_pool)
         mid = self.mid_loss(student_mid, teacher_mid)

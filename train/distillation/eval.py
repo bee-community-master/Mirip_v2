@@ -59,6 +59,7 @@ def _build_loss_bundle(config: DistillationExperimentConfig, stage: StageConfig)
         weights=stage.loss_weights,
         patch_loss_type=config.distillation.patch_loss_type,
         rel_patch_sample_size=config.distillation.rel_patch_sample_size,
+        use_relational_loss=config.distillation.use_relational_loss,
     )
 
 

@@ -184,6 +184,12 @@ def align_patch_tokens(
     return resized.permute(0, 2, 3, 1).reshape(batch_size, dst_h * dst_w, channels)
 
 
+def _resolve_requested_indices(hidden_state_indices: Sequence[int] | None, depth: int) -> tuple[list[int], list[int]]:
+    requested = list(hidden_state_indices or range(depth))
+    unique_requested = sorted(set(requested))
+    return requested, unique_requested
+
+
 class BackboneAdapter(nn.Module):
     """Backend-agnostic wrapper around a vision backbone used for distillation."""
 
@@ -270,7 +276,7 @@ class HuggingFaceBackboneAdapter(BackboneAdapter):
         grid_hw = _infer_patch_grid(pixel_values, self.patch_size)
         if self.freeze:
             self.model.eval()
-        capture_indices = sorted(set(hidden_state_indices or range(self.depth)))
+        requested_indices, capture_indices = _resolve_requested_indices(hidden_state_indices, self.depth)
         captured: list[tuple[int, torch.Tensor]] = []
         hooks: list[Any] = []
 
@@ -309,17 +315,20 @@ class HuggingFaceBackboneAdapter(BackboneAdapter):
         if output_hidden_states:
             if use_fallback_hidden_states:
                 raw_hidden_states = list(getattr(outputs, "hidden_states", []) or [])
-                hidden_states = []
+                layer_by_index: dict[int, torch.Tensor] = {}
                 for index in capture_indices:
                     if 0 <= (index + 1) < len(raw_hidden_states):
                         layer_sequence = _feature_sequence(raw_hidden_states[index + 1], grid_hw)
                         layer_patch, _ = _split_tokens(layer_sequence, grid_hw)
-                        hidden_states.append(layer_patch)
+                        layer_by_index[index] = layer_patch
+                hidden_states = [layer_by_index[index] for index in requested_indices if index in layer_by_index]
             else:
-                for _, tensor in sorted(captured, key=lambda item: item[0]):
+                layer_by_index: dict[int, torch.Tensor] = {}
+                for index, tensor in sorted(captured, key=lambda item: item[0]):
                     layer_sequence = _feature_sequence(tensor, grid_hw)
                     layer_patch, _ = _split_tokens(layer_sequence, grid_hw)
-                    hidden_states.append(layer_patch)
+                    layer_by_index[index] = layer_patch
+                hidden_states = [layer_by_index[index] for index in requested_indices if index in layer_by_index]
         return BackboneOutputs(
             patch_tokens=patch_tokens,
             cls_token=cls_token,
@@ -371,7 +380,7 @@ class TimmBackboneAdapter(BackboneAdapter):
         hidden_state_indices: Sequence[int] | None = None,
     ) -> BackboneOutputs:
         grid_hw = _infer_patch_grid(pixel_values, self.patch_size)
-        capture_indices = sorted(set(hidden_state_indices or range(self.depth)))
+        requested_indices, capture_indices = _resolve_requested_indices(hidden_state_indices, self.depth)
         captured: list[tuple[int, torch.Tensor]] = []
         hooks: list[Any] = []
 
@@ -401,10 +410,12 @@ class TimmBackboneAdapter(BackboneAdapter):
         pooled_output = patch_tokens.mean(dim=1)
         hidden_states: list[torch.Tensor] = []
         if output_hidden_states:
-            for _, tensor in sorted(captured, key=lambda item: item[0]):
+            layer_by_index: dict[int, torch.Tensor] = {}
+            for index, tensor in sorted(captured, key=lambda item: item[0]):
                 layer_sequence = _feature_sequence(tensor, grid_hw)
                 layer_patch, _ = _split_tokens(layer_sequence, grid_hw)
-                hidden_states.append(layer_patch)
+                layer_by_index[index] = layer_patch
+            hidden_states = [layer_by_index[index] for index in requested_indices if index in layer_by_index]
         return BackboneOutputs(
             patch_tokens=patch_tokens,
             cls_token=cls_token,

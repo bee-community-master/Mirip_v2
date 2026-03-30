@@ -213,13 +213,28 @@ def _loss_weights_from_dict(data: dict[str, Any] | None, defaults: LossWeights |
     return LossWeights(**base)
 
 
-def _load_stage_configs(values: list[dict[str, Any]] | None) -> list[StageConfig]:
+def _merge_default_stage_weights(stages: list[StageConfig], default_weights: LossWeights) -> list[StageConfig]:
+    merged: list[StageConfig] = []
+    baseline = LossWeights()
+    for stage in stages:
+        copied = copy.deepcopy(stage)
+        if copied.loss_weights == baseline:
+            copied.loss_weights = copy.deepcopy(default_weights)
+        merged.append(copied)
+    return merged
+
+
+def _load_stage_configs(
+    values: list[dict[str, Any]] | None,
+    *,
+    default_weights: LossWeights,
+) -> list[StageConfig]:
     if not values:
-        return DistillationExperimentConfig().stages
+        return _merge_default_stage_weights(DistillationExperimentConfig().stages, default_weights)
     stages: list[StageConfig] = []
     for entry in values:
         payload = dict(entry)
-        payload["loss_weights"] = _loss_weights_from_dict(payload.get("loss_weights"))
+        payload["loss_weights"] = _loss_weights_from_dict(payload.get("loss_weights"), default_weights)
         stages.append(StageConfig(**payload))
     return stages
 
@@ -227,6 +242,10 @@ def _load_stage_configs(values: list[dict[str, Any]] | None) -> list[StageConfig
 def load_config(path: str | Path) -> DistillationExperimentConfig:
     config_path = resolve_distill_path(path)
     raw = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    distillation_config = DistillationConfig(
+        weights=_loss_weights_from_dict(raw.get("distillation", {}).get("weights"), LossWeights()),
+        **{k: v for k, v in raw.get("distillation", {}).items() if k != "weights"},
+    )
     cfg = DistillationExperimentConfig(
         experiment=ExperimentConfig(**raw.get("experiment", {})),
         paths=PathsConfig(**raw.get("paths", {})),
@@ -235,11 +254,8 @@ def load_config(path: str | Path) -> DistillationExperimentConfig:
             **{k: v for k, v in raw.get("data", {}).items() if k != "augmentation"},
         ),
         models=ModelsConfig(**raw.get("models", {})),
-        distillation=DistillationConfig(
-            weights=_loss_weights_from_dict(raw.get("distillation", {}).get("weights"), LossWeights()),
-            **{k: v for k, v in raw.get("distillation", {}).items() if k != "weights"},
-        ),
-        stages=_load_stage_configs(raw.get("stages")),
+        distillation=distillation_config,
+        stages=_load_stage_configs(raw.get("stages"), default_weights=distillation_config.weights),
         optimizer=OptimizerConfig(**raw.get("optimizer", {})),
         logging=LoggingConfig(**raw.get("logging", {})),
         evaluation=EvaluationConfig(**raw.get("evaluation", {})),
