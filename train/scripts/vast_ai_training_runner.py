@@ -53,6 +53,12 @@ LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 SYNC_LOG_DIR = ROOT / OUTPUT_MODELS_REL_DIR / "logs" / "vast_sync"
 CHECKPOINT_EPOCH_PATTERN = re.compile(r"checkpoint_epoch_(\d+)\.pt$")
+LAUNCH_AGENT_START_INTERVAL = 900
+LEGACY_CHECKPOINTS_REL_DIR = "checkpoints"
+REMOTE_CHECKPOINT_ROOTS = (
+    f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}",
+    f"{LEGACY_CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}",
+)
 
 from vast_ai_control import (  # noqa: E402
     VastClient,
@@ -113,12 +119,34 @@ def load_postprocess_registry(path: str | Path) -> dict[str, object]:
         raise SystemExit(f"Postprocess registry not found: {registry_path}")
     payload = json.loads(registry_path.read_text(encoding="utf-8"))
     selected = payload.get("selected_best_checkpoint_after_compare")
-    retained = payload.get("retained_checkpoints")
-    if not selected or not isinstance(retained, list) or not retained:
+    if not selected:
         raise SystemExit(f"Postprocess registry is incomplete: {registry_path}")
-    if not str(selected).startswith(f"{CHECKPOINTS_REL_DIR}/"):
-        raise SystemExit(f"Selected checkpoint must stay under {TRAIN_CHECKPOINTS_DIR}: {selected}")
+    allowed_prefixes = (f"{CHECKPOINTS_REL_DIR}/", f"{LEGACY_CHECKPOINTS_REL_DIR}/")
+    if not str(selected).startswith(allowed_prefixes):
+        raise SystemExit(
+            f"Selected checkpoint must stay under {TRAIN_CHECKPOINTS_DIR} or {TRAIN_ROOT}/{LEGACY_CHECKPOINTS_REL_DIR}: {selected}"
+        )
     return payload
+
+
+def resolve_retained_checkpoints(registry: dict[str, object]) -> list[str]:
+    retained = registry.get("retained_checkpoints")
+    checkpoints: list[str] = []
+    if isinstance(retained, list):
+        checkpoints.extend(str(item) for item in retained if item)
+    selected = registry.get("selected_best_checkpoint_after_compare")
+    current_candidate = registry.get("current_candidate_checkpoint")
+    for candidate in (selected, current_candidate):
+        if candidate:
+            checkpoints.append(str(candidate))
+
+    deduped: list[str] = []
+    for checkpoint in checkpoints:
+        if checkpoint not in deduped:
+            deduped.append(checkpoint)
+    if not deduped:
+        raise SystemExit("Postprocess registry did not contain any retained checkpoints.")
+    return deduped
 
 
 def checkpoint_epoch_value(path: str | Path | None) -> int | None:
@@ -307,33 +335,54 @@ def pull_artifacts(config_path: str, instance_id: int) -> int:
 
 def build_remote_prune_command(
     remote_root: str,
-    retained_checkpoint: str,
+    selected_checkpoint: str,
+    retained_checkpoints: list[str],
     registry_candidate_checkpoint: str | None = None,
 ) -> str:
-    retained = retained_checkpoint.strip()
-    selected_dir = str(Path(retained).parent).replace("\\", "/")
-    checkpoint_root = f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}"
+    retained = [checkpoint.strip() for checkpoint in retained_checkpoints if checkpoint.strip()]
+    selected = selected_checkpoint.strip()
+    selected_dir = str(Path(selected).parent).replace("\\", "/")
     command_parts = [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}/{TRAIN_ROOT}",
-        f'SELECTED_CHECKPOINT={shlex.quote(retained)}',
+        f'SELECTED_CHECKPOINT={shlex.quote(selected)}',
         'if [ ! -f "$SELECTED_CHECKPOINT" ]; then echo "Selected checkpoint missing: $SELECTED_CHECKPOINT" >&2; exit 1; fi',
     ]
+    for index, checkpoint in enumerate(retained):
+        command_parts.append(f'KEEP_{index}={shlex.quote(checkpoint)}')
     candidate_epoch = checkpoint_epoch_value(registry_candidate_checkpoint)
     if candidate_epoch is not None:
         command_parts.extend(
             [
                 f"REGISTRY_CANDIDATE_EPOCH={candidate_epoch}",
-                f'LATEST_REMOTE_EPOCH=$(find {shlex.quote(checkpoint_root)} -type f -name "checkpoint_epoch_*.pt" | sed -E \'s|.*checkpoint_epoch_0*([0-9]+)\\.pt|\\1|\' | sort -n | tail -n 1)',
+                "LATEST_REMOTE_EPOCH=$(" +
+                "{" +
+                " ".join(
+                    [
+                        f'find {shlex.quote(root)} -type f -name "checkpoint_epoch_*.pt" 2>/dev/null'
+                        for root in REMOTE_CHECKPOINT_ROOTS
+                    ]
+                ) +
+                "; } | sed -E 's|.*checkpoint_epoch_0*([0-9]+)\\.pt|\\1|' | sort -n | tail -n 1)",
                 'if [ -n "$LATEST_REMOTE_EPOCH" ] && [ "$LATEST_REMOTE_EPOCH" -gt "$REGISTRY_CANDIDATE_EPOCH" ]; then echo "Registry is stale on remote: candidate epoch $REGISTRY_CANDIDATE_EPOCH, newest checkpoint epoch $LATEST_REMOTE_EPOCH" >&2; exit 1; fi',
             ]
         )
     command_parts.extend(
         [
-            f'find {shlex.quote(checkpoint_root)} \\( -type f -o -type l \\) -name "*.pt" ! -path "$SELECTED_CHECKPOINT" -delete',
+            "for CHECKPOINT_ROOT in " + " ".join(shlex.quote(root) for root in REMOTE_CHECKPOINT_ROOTS) + "; do",
+            '  [ -d "$CHECKPOINT_ROOT" ] || continue',
+            '  find "$CHECKPOINT_ROOT" \\( -type f -o -type l \\) -name "*.pt" -print0 | while IFS= read -r -d "" CHECKPOINT_PATH; do',
+            '    SHOULD_KEEP=0',
+            "    for KEEP_PATH in " + " ".join(f'"$KEEP_{index}"' for index in range(len(retained))) + "; do",
+            '      [ -n "$KEEP_PATH" ] || continue',
+            '      if [ "$CHECKPOINT_PATH" = "$KEEP_PATH" ]; then SHOULD_KEEP=1; break; fi',
+            "    done",
+            '    if [ "$SHOULD_KEEP" -eq 0 ]; then rm -f "$CHECKPOINT_PATH"; fi',
+            "  done",
+            "done",
             f'BEST_LINK={shlex.quote(f"{selected_dir}/best_model.pt")}',
             'if [ "$SELECTED_CHECKPOINT" != "$BEST_LINK" ]; then rm -f "$BEST_LINK"; ln -sfn "$(basename "$SELECTED_CHECKPOINT")" "$BEST_LINK"; fi',
-            'echo "retained=$SELECTED_CHECKPOINT"',
+            'echo "retained=' + ",".join(retained) + '"',
         ]
     )
     return _bash_command(command_parts)
@@ -352,14 +401,16 @@ def sync_prune(config_path: str, instance_id: int) -> int:
             "Postprocess registry is older than the newest downloaded checkpoint. "
             "Skip prune until remote postprocess finishes updating the registry."
         )
-    retained_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
+    retained_checkpoints = resolve_retained_checkpoints(registry)
+    selected_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
     current_candidate_checkpoint = registry.get("current_candidate_checkpoint")
 
     config = load_toml(config_absolute)
     remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
     command = build_remote_prune_command(
         remote_root,
-        retained_checkpoint,
+        selected_checkpoint,
+        retained_checkpoints,
         str(current_candidate_checkpoint) if current_candidate_checkpoint else None,
     )
     api_key = require_env("VAST_API_KEY")
@@ -383,7 +434,7 @@ def build_launch_agent_payload(config_path: str) -> dict[str, object]:
         ],
         "WorkingDirectory": str(REPO_ROOT),
         "RunAtLoad": True,
-        "StartInterval": 3600,
+        "StartInterval": LAUNCH_AGENT_START_INTERVAL,
         "StandardOutPath": str(stdout_path),
         "StandardErrorPath": str(stderr_path),
     }
@@ -436,7 +487,7 @@ def parse_args() -> argparse.Namespace:
     sync_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
     sync_cmd.add_argument("--instance-id", type=int)
 
-    install_cmd = subparsers.add_parser("install-launch-agent", help="Install a 1-hour launchd sync/prune job.")
+    install_cmd = subparsers.add_parser("install-launch-agent", help="Install a 15-minute launchd sync/prune job.")
     install_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
 
     subparsers.add_parser("uninstall-launch-agent", help="Remove the launchd sync/prune job.")

@@ -26,15 +26,21 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
                 self.assertEqual(os.environ["VAST_INSTANCE_ID"], "9999")
                 self.assertEqual(os.environ["NEW_KEY"], "value")
 
-    def test_build_remote_prune_command_uses_single_retained_checkpoint(self) -> None:
+    def test_build_remote_prune_command_keeps_selected_and_latest_checkpoints(self) -> None:
         command = vast_ai_training_runner.build_remote_prune_command(
             "/workspace/mirip_v2",
-            "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0009.pt",
+            "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+            [
+                "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+            ],
             "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0009.pt",
         )
 
-        self.assertIn("checkpoint_epoch_0009.pt", command)
-        self.assertIn('find output_models/checkpoints/dinov3_vit7b16 \\( -type f -o -type l \\) -name "*.pt"', command)
+        self.assertIn("checkpoint_epoch_0002.pt", command)
+        self.assertIn("checkpoint_epoch_0005.pt", command)
+        self.assertIn("output_models/checkpoints/dinov3_vit7b16", command)
+        self.assertIn("checkpoints/dinov3_vit7b16", command)
         self.assertIn("best_model.pt", command)
         self.assertIn("REGISTRY_CANDIDATE_EPOCH=9", command)
         self.assertIn("LATEST_REMOTE_EPOCH", command)
@@ -50,7 +56,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertEqual(payload["Label"], "com.mirip.vast-checkpoint-sync")
         self.assertIn("sync-prune", payload["ProgramArguments"])
         self.assertIn(str(config_path), payload["ProgramArguments"])
-        self.assertEqual(payload["StartInterval"], 3600)
+        self.assertEqual(payload["StartInterval"], 900)
 
     def test_load_postprocess_registry_requires_selected_best_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -59,6 +65,23 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
             with self.assertRaises(SystemExit):
                 vast_ai_training_runner.load_postprocess_registry(registry_path)
+
+    def test_resolve_retained_checkpoints_keeps_selected_and_current_candidate(self) -> None:
+        retained = vast_ai_training_runner.resolve_retained_checkpoints(
+            {
+                "selected_best_checkpoint_after_compare": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+                "current_candidate_checkpoint": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+                "retained_checkpoints": ["checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt"],
+            }
+        )
+
+        self.assertEqual(
+            retained,
+            [
+                "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+            ],
+        )
 
     def test_registry_is_stale_when_newer_checkpoint_exists_locally(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

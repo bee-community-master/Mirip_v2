@@ -96,6 +96,13 @@ class PostprocessRegistryTests(unittest.TestCase):
                 payload["selected_best_checkpoint_after_compare"],
                 "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0006.pt",
             )
+            self.assertEqual(
+                payload["retained_checkpoints"],
+                [
+                    "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0006.pt",
+                    "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
+                ],
+            )
             self.assertEqual(payload["decision"]["criterion"], "anchor_tier_accuracy")
             self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
 
@@ -150,6 +157,13 @@ class PostprocessRegistryTests(unittest.TestCase):
             self.assertEqual(
                 payload["selected_best_checkpoint_after_compare"],
                 "output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
+            )
+            self.assertEqual(
+                payload["retained_checkpoints"],
+                [
+                    "output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
+                    "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0001.pt",
+                ],
             )
             self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
 

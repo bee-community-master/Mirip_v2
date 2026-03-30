@@ -197,6 +197,9 @@ def build_registry_payload(
     decision: dict[str, Any],
 ) -> dict[str, Any]:
     compared_at = datetime.now(timezone.utc).isoformat()
+    retained_checkpoints = [selected.checkpoint_relative]
+    if candidate.checkpoint_relative != selected.checkpoint_relative:
+        retained_checkpoints.append(candidate.checkpoint_relative)
     return {
         "registry_version": 1,
         "selection_policy": [
@@ -216,7 +219,7 @@ def build_registry_payload(
         "selected_best_checkpoint_after_compare": selected.checkpoint_relative,
         "selected_best_report_after_compare": selected.report_relative,
         "selected_best_metrics_after_compare": selected.metric_snapshot,
-        "retained_checkpoints": [selected.checkpoint_relative],
+        "retained_checkpoints": retained_checkpoints,
         "decision": decision,
     }
 
