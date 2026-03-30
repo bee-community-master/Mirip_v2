@@ -6,7 +6,9 @@ node_modules
 .netlify
 .wrangler
 /.svelte-kit
+/frontend/.svelte-kit
 /build
+/frontend/build
 
 # OS
 .DS_Store
@@ -42,11 +44,11 @@ __pycache__/
 *.pyc
 *.pyo
 
-logs/
-anchors/
-checkpoints/
-reports/
+train/logs/
+train/anchors/
+train/checkpoints/
+train/reports/
 
-training/data/*.csv
-training/data/*.json
-!training/data/README.md
+train/training/data/*.csv
+train/training/data/*.json
+!train/training/data/README.md

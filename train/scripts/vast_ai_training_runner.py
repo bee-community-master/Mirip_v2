@@ -13,6 +13,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
+TRAIN_ROOT = "train"
+TRAINING_DIR = f"{TRAIN_ROOT}/training"
+TRAINING_DATA_DIR = f"{TRAINING_DIR}/data"
+TRAIN_CONFIG_PATH = f"{TRAIN_ROOT}/configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml"
+TRAIN_REPORTS_DIR = f"{TRAIN_ROOT}/reports"
+TRAIN_CHECKPOINTS_DIR = f"{TRAIN_ROOT}/checkpoints"
+TRAIN_ANCHORS_DIR = f"{TRAIN_ROOT}/anchors"
+
 from vast_ai_control import (  # noqa: E402
     VastClient,
     get_connection_info,
@@ -40,8 +48,8 @@ def _bootstrap_parts(remote_root: str) -> list[str]:
         "python3 -m venv .venv",
         ". .venv/bin/activate",
         "python -m pip install --upgrade pip",
-        "python -m pip install -r training/requirements.txt",
-        "mkdir -p checkpoints/dinov3_vitl16 reports anchors training/data",
+        f"python -m pip install -r {TRAINING_DIR}/requirements.txt",
+        f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16 {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR} {TRAINING_DATA_DIR}",
     ]
 
 
@@ -54,8 +62,8 @@ def _prepare_data_parts(remote_root: str) -> list[str]:
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        f"{python_bin} training/prepare_snapshot.py --metadata-dir data/crawled/metadata --image-root data/crawled --output-manifest training/data/snapshot_manifest.csv --report reports/snapshot_report.json",
-        f"{python_bin} training/build_pairs.py --manifest training/data/snapshot_manifest.csv --output-dir training/data --total-pairs 50000",
+        f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/crawled/metadata --image-root data/crawled --output-manifest {TRAINING_DATA_DIR}/snapshot_manifest.csv --report {TRAIN_REPORTS_DIR}/snapshot_report.json",
+        f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAINING_DATA_DIR}/snapshot_manifest.csv --output-dir {TRAINING_DATA_DIR} --total-pairs 50000",
     ]
 
 
@@ -65,14 +73,14 @@ def _build_prepare_data_command(remote_root: str) -> str:
 
 def _build_smoke_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
-    checkpoint_dir = "checkpoints/dinov3_vitl16/smoke"
+    checkpoint_dir = f"{TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16/smoke"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
     parts = _prepare_data_parts(remote_root)
     parts.extend(
         [
-            f"{python_bin} training/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root . --output-dir {checkpoint_dir} --epochs 1 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report reports/dinov3_vitl16_smoke_train.json",
-            f"{python_bin} training/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root . --output anchors/anchors.pt --report reports/dinov3_vitl16_smoke_anchors.json",
-            f"{python_bin} training/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root . --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --output reports/dinov3_vitl16_smoke.json",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train {TRAINING_DATA_DIR}/pairs_train.csv --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --output-dir {checkpoint_dir} --epochs 1 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_smoke_train.json",
+            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata {TRAINING_DATA_DIR}/metadata_train.csv --image-root . --output {TRAIN_ANCHORS_DIR}/anchors.pt --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_smoke_anchors.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --anchors {TRAIN_ANCHORS_DIR}/anchors.pt --metadata-eval {TRAINING_DATA_DIR}/metadata_val.csv --output {TRAIN_REPORTS_DIR}/dinov3_vitl16_smoke.json",
         ]
     )
     return _bash_command(parts)
@@ -80,14 +88,14 @@ def _build_smoke_command(remote_root: str) -> str:
 
 def _build_full_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
-    checkpoint_dir = "checkpoints/dinov3_vitl16/full"
+    checkpoint_dir = f"{TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16/full"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
     parts = _prepare_data_parts(remote_root)
     parts.extend(
         [
-            f"{python_bin} training/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root . --output-dir {checkpoint_dir} --epochs 50 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report reports/dinov3_vitl16_full_train.json",
-            f"{python_bin} training/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root . --output anchors/anchors.pt --report reports/dinov3_vitl16_full_anchors.json",
-            f"{python_bin} training/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root . --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --output reports/dinov3_vitl16_full.json",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train {TRAINING_DATA_DIR}/pairs_train.csv --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --output-dir {checkpoint_dir} --epochs 50 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_full_train.json",
+            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata {TRAINING_DATA_DIR}/metadata_train.csv --image-root . --output {TRAIN_ANCHORS_DIR}/anchors.pt --report {TRAIN_REPORTS_DIR}/dinov3_vitl16_full_anchors.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val {TRAINING_DATA_DIR}/pairs_val.csv --image-root . --anchors {TRAIN_ANCHORS_DIR}/anchors.pt --metadata-eval {TRAINING_DATA_DIR}/metadata_val.csv --output {TRAIN_REPORTS_DIR}/dinov3_vitl16_full.json",
         ]
     )
     return _bash_command(parts)
@@ -129,10 +137,10 @@ def pull_artifacts(config_path: str, instance_id: int) -> int:
         "-e",
         ssh_cmd if not privkey_path else f"{ssh_cmd} -i {shlex.quote(str(privkey_path))}",
     ]
-    for remote_rel in ("checkpoints", "reports", "anchors"):
+    for artifact_dir in ("checkpoints", "reports", "anchors"):
         cmd = list(rsync_prefix)
-        remote = f"root@{host}:{remote_root}/{remote_rel}/"
-        local = str(ROOT / remote_rel)
+        remote = f"root@{host}:{remote_root}/{TRAIN_ROOT}/{artifact_dir}/"
+        local = str(ROOT / artifact_dir)
         cmd.extend([remote, local])
         result = run_local_command(cmd)
         if result != 0:
@@ -145,7 +153,7 @@ def parse_args() -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--config", default="configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml")
+    common.add_argument("--config", default=TRAIN_CONFIG_PATH)
     common.add_argument("--stage", choices=["bootstrap", "prepare-data", "smoke", "full"], required=True)
 
     print_cmd = subparsers.add_parser("print-command", parents=[common], help="Print the remote command for a stage")
@@ -156,7 +164,7 @@ def parse_args() -> argparse.Namespace:
     execute_cmd.add_argument("--follow-delay", type=int, default=5)
 
     pull_cmd = subparsers.add_parser("pull-artifacts", help="Download checkpoints/reports/anchors from an instance")
-    pull_cmd.add_argument("--config", default="configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml")
+    pull_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
     pull_cmd.add_argument("--instance-id", type=int, required=True)
 
     return parser.parse_args()

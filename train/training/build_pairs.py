@@ -14,8 +14,8 @@ from training.pairs import build_pair_outputs
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate train/val/test metadata and pair CSVs.")
-    parser.add_argument("--manifest", default="training/data/snapshot_manifest.csv")
-    parser.add_argument("--output-dir", default="training/data")
+    parser.add_argument("--manifest", default="train/training/data/snapshot_manifest.csv")
+    parser.add_argument("--output-dir", default="train/training/data")
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)
     parser.add_argument("--total-pairs", type=int, default=50_000)
