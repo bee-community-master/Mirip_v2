@@ -35,20 +35,29 @@ class FakeVmLauncher:
         return None
 
 
+def _make_uploaded_asset(
+    *,
+    upload_id: str,
+    user_id: str = "user-123",
+    status: UploadStatus = UploadStatus.UPLOADED,
+) -> UploadAsset:
+    return UploadAsset(
+        id=upload_id,
+        user_id=user_id,
+        filename="piece.jpg",
+        content_type="image/jpeg",
+        size_bytes=2048,
+        object_name=f"users/{user_id}/diagnosis/{upload_id}/piece.jpg",
+        status=status,
+        created_at=utc_now(),
+    )
+
+
 async def test_create_diagnosis_job_stores_queued_job() -> None:
     store = MemoryDocumentStore()
     upload_repository = DocumentUploadRepository(store)
     job_repository = DocumentDiagnosisJobRepository(store)
-    upload = UploadAsset(
-        id="upl-1",
-        user_id="user-123",
-        filename="piece.jpg",
-        content_type="image/jpeg",
-        size_bytes=2048,
-        object_name="users/user-123/diagnosis/upl-1/piece.jpg",
-        status=UploadStatus.UPLOADED,
-        created_at=utc_now(),
-    )
+    upload = _make_uploaded_asset(upload_id="upl-1")
     await upload_repository.create(upload)
 
     usecase = CreateDiagnosisJobUseCase(upload_repository, job_repository)
@@ -65,18 +74,7 @@ async def test_create_diagnosis_job_rejects_foreign_upload() -> None:
     store = MemoryDocumentStore()
     upload_repository = DocumentUploadRepository(store)
     job_repository = DocumentDiagnosisJobRepository(store)
-    await upload_repository.create(
-        UploadAsset(
-            id="upl-2",
-            user_id="other-user",
-            filename="piece.jpg",
-            content_type="image/jpeg",
-            size_bytes=2048,
-            object_name="users/other-user/diagnosis/upl-2/piece.jpg",
-            status=UploadStatus.UPLOADED,
-            created_at=utc_now(),
-        )
-    )
+    await upload_repository.create(_make_uploaded_asset(upload_id="upl-2", user_id="other-user"))
 
     usecase = CreateDiagnosisJobUseCase(upload_repository, job_repository)
 
@@ -92,16 +90,7 @@ async def test_create_diagnosis_job_rejects_pending_upload() -> None:
     upload_repository = DocumentUploadRepository(store)
     job_repository = DocumentDiagnosisJobRepository(store)
     await upload_repository.create(
-        UploadAsset(
-            id="upl-3",
-            user_id="user-123",
-            filename="piece.jpg",
-            content_type="image/jpeg",
-            size_bytes=2048,
-            object_name="users/user-123/diagnosis/upl-3/piece.jpg",
-            status=UploadStatus.PENDING,
-            created_at=utc_now(),
-        )
+        _make_uploaded_asset(upload_id="upl-3", status=UploadStatus.PENDING)
     )
 
     usecase = CreateDiagnosisJobUseCase(upload_repository, job_repository)
@@ -117,16 +106,7 @@ async def test_create_diagnosis_job_records_vm_launch_metadata() -> None:
     store = MemoryDocumentStore()
     upload_repository = DocumentUploadRepository(store)
     job_repository = DocumentDiagnosisJobRepository(store)
-    upload = UploadAsset(
-        id="upl-4",
-        user_id="user-123",
-        filename="piece.jpg",
-        content_type="image/jpeg",
-        size_bytes=2048,
-        object_name="users/user-123/diagnosis/upl-4/piece.jpg",
-        status=UploadStatus.UPLOADED,
-        created_at=utc_now(),
-    )
+    upload = _make_uploaded_asset(upload_id="upl-4")
     await upload_repository.create(upload)
 
     usecase = CreateDiagnosisJobUseCase(
@@ -151,16 +131,7 @@ async def test_create_diagnosis_job_fails_fast_when_cpu_onnx_launcher_is_missing
     store = MemoryDocumentStore()
     upload_repository = DocumentUploadRepository(store)
     job_repository = DocumentDiagnosisJobRepository(store)
-    upload = UploadAsset(
-        id="upl-5",
-        user_id="user-123",
-        filename="piece.jpg",
-        content_type="image/jpeg",
-        size_bytes=2048,
-        object_name="users/user-123/diagnosis/upl-5/piece.jpg",
-        status=UploadStatus.UPLOADED,
-        created_at=utc_now(),
-    )
+    upload = _make_uploaded_asset(upload_id="upl-5")
     await upload_repository.create(upload)
 
     usecase = CreateDiagnosisJobUseCase(
