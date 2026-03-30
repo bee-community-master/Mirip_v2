@@ -13,6 +13,7 @@ from mirip_backend.domain.diagnosis.entities import DiagnosisJob, DiagnosisResul
 from mirip_backend.domain.profiles.entities import PortfolioItem, Profile
 from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.infrastructure.firestore.client import DocumentStore
+from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import CredentialStatus, JobStatus, UploadStatus, Visibility
 
 
@@ -36,8 +37,8 @@ def _deserialize_datetime(value: Any) -> datetime | None:
     return None
 
 
-def _page(items: list[Any], *, limit: int, offset: int) -> Page[Any]:
-    return Page(items=items, total=len(items), limit=limit, offset=offset)
+def _page(items: list[Any], *, total: int, limit: int, offset: int) -> Page[Any]:
+    return Page(items=items, total=total, limit=limit, offset=offset)
 
 
 class DocumentUploadRepository:
@@ -124,7 +125,7 @@ class DocumentDiagnosisJobRepository:
         jobs = [
             item for item in [await self.get(str(doc["id"])) for doc in docs] if item is not None
         ]
-        return _page(jobs[offset : offset + limit], limit=limit, offset=offset)
+        return _page(jobs[offset : offset + limit], total=len(jobs), limit=limit, offset=offset)
 
     async def lease_next_ready_job(
         self,
@@ -133,11 +134,15 @@ class DocumentDiagnosisJobRepository:
         lease_until: datetime,
     ) -> DiagnosisJob | None:
         docs = await self._store.query(self.COLLECTION, order_by="created_at", descending=False)
+        now = utc_now()
         for doc in docs:
             job = await self.get(str(doc["id"]))
             if job is None:
                 continue
-            if job.status not in {JobStatus.QUEUED, JobStatus.EXPIRED}:
+            lease_expired = job.lease_expires_at is not None and job.lease_expires_at <= now
+            if job.status not in {JobStatus.QUEUED, JobStatus.EXPIRED} and not (
+                job.status in {JobStatus.LEASED, JobStatus.RUNNING} and lease_expired
+            ):
                 continue
             leased = DiagnosisJob(
                 **{
@@ -164,11 +169,10 @@ class DocumentDiagnosisResultRepository:
         await self._store.put(self.COLLECTION, result.id, _serialize(asdict(result)))
         return result
 
-    async def get_by_job_id(self, job_id: str) -> DiagnosisResult | None:
-        docs = await self._store.query(self.COLLECTION, filters=(("job_id", job_id),), limit=1)
-        if not docs:
+    async def get(self, result_id: str) -> DiagnosisResult | None:
+        doc = await self._store.get(self.COLLECTION, result_id)
+        if doc is None:
             return None
-        doc = docs[0]
         return DiagnosisResult(
             id=str(doc["id"]),
             job_id=str(doc["job_id"]),
@@ -181,6 +185,12 @@ class DocumentDiagnosisResultRepository:
             summary=doc.get("summary"),
         )
 
+    async def get_by_job_id(self, job_id: str) -> DiagnosisResult | None:
+        docs = await self._store.query(self.COLLECTION, filters=(("job_id", job_id),), limit=1)
+        if not docs:
+            return None
+        return await self.get(str(docs[0]["id"]))
+
     async def list_by_user(self, user_id: str, *, limit: int, offset: int) -> Page[DiagnosisResult]:
         docs = await self._store.query(
             self.COLLECTION,
@@ -189,11 +199,14 @@ class DocumentDiagnosisResultRepository:
             descending=True,
         )
         results = [
-            item
-            for item in [await self.get_by_job_id(str(doc["job_id"])) for doc in docs]
-            if item is not None
+            item for item in [await self.get(str(doc["id"])) for doc in docs] if item is not None
         ]
-        return _page(results[offset : offset + limit], limit=limit, offset=offset)
+        return _page(
+            results[offset : offset + limit],
+            total=len(results),
+            limit=limit,
+            offset=offset,
+        )
 
 
 class DocumentCompetitionRepository:
@@ -209,7 +222,7 @@ class DocumentCompetitionRepository:
             order_by="title",
         )
         items = [self._to_entity(doc) for doc in docs]
-        return _page(items[offset : offset + limit], limit=limit, offset=offset)
+        return _page(items[offset : offset + limit], total=len(items), limit=limit, offset=offset)
 
     async def get(self, competition_id: str) -> Competition | None:
         doc = await self._store.get(self.COLLECTION, competition_id)
@@ -261,7 +274,7 @@ class DocumentCompetitionSubmissionRepository:
             )
             for doc in docs[offset : offset + limit]
         ]
-        return _page(items, limit=limit, offset=offset)
+        return _page(items, total=len(docs), limit=limit, offset=offset)
 
 
 class DocumentCredentialRepository:
@@ -337,7 +350,7 @@ class DocumentPortfolioRepository:
             descending=True,
         )
         items = [self._to_entity(doc) for doc in docs[offset : offset + limit]]
-        return _page(items, limit=limit, offset=offset)
+        return _page(items, total=len(docs), limit=limit, offset=offset)
 
     async def list_by_ids(self, item_ids: list[str]) -> list[PortfolioItem]:
         items: list[PortfolioItem] = []

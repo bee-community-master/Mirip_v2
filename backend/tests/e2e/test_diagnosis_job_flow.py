@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+from httpx import AsyncClient
+
 from mirip_backend.worker.inference.service import GpuInferenceService
 from mirip_backend.worker.poller import JobPoller
 from mirip_backend.worker.result_writer import DiagnosisResultWriter
 
 
-async def test_diagnosis_job_flow(client, app, auth_headers) -> None:
+async def test_diagnosis_job_flow(
+    client: AsyncClient,
+    app: FastAPI,
+    auth_headers: dict[str, str],
+) -> None:
     upload_response = await client.post(
         "/v1/uploads",
         headers=auth_headers,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from mirip_backend.api.deps.auth import CurrentUserDep
+from mirip_backend.api.deps.auth import CurrentUserDep, OptionalCurrentUserDep
 from mirip_backend.api.deps.services import ContainerDep
 from mirip_backend.api.schemas.credentials import CredentialResponse, PublishCredentialRequest
 from mirip_backend.shared.enums import Visibility
@@ -48,11 +48,15 @@ async def publish_credential(
 @router.get("/{credential_id}", response_model=CredentialResponse)
 async def get_credential(
     credential_id: str,
-    current_user: CurrentUserDep,
+    current_user: OptionalCurrentUserDep,
     container: ContainerDep,
 ) -> CredentialResponse:
     credential = await container.credential_repository.get(credential_id)
-    if credential is None or credential.user_id != current_user.user_id:
+    if credential is None:
+        raise NotFoundError("Credential not found")
+    if credential.visibility != Visibility.PUBLIC and (
+        current_user is None or credential.user_id != current_user.user_id
+    ):
         raise NotFoundError("Credential not found")
     return CredentialResponse(
         id=credential.id,

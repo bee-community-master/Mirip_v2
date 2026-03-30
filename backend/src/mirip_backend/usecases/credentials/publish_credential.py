@@ -36,15 +36,11 @@ class PublishCredentialUseCase:
         actor: AuthenticatedUser,
         command: PublishCredentialCommand,
     ) -> Credential:
-        result_page = await self._result_repository.list_by_user(actor.user_id, limit=500, offset=0)
-        result = next((item for item in result_page.items if item.id == command.result_id), None)
+        result = await self._result_repository.get(command.result_id)
         if result is None:
-            other_result = await self._result_repository.get_by_job_id(command.result_id)
-            if other_result is None:
-                raise NotFoundError("Diagnosis result not found")
-            if other_result.user_id != actor.user_id:
-                raise AuthorizationError()
-            result = other_result
+            raise NotFoundError("Diagnosis result not found")
+        if result.user_id != actor.user_id:
+            raise AuthorizationError()
 
         credential = Credential(
             id=new_id("cred"),

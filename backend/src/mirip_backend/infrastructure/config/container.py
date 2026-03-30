@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from mirip_backend.domain.competitions.entities import Competition
 from mirip_backend.infrastructure.auth.firebase.provider import FirebaseAuthService
@@ -56,8 +56,8 @@ async def _seed_memory_competitions(repository: DocumentCompetitionRepository) -
             title="2026 Visual Design Trial Contest",
             description="Frontend-backed sample competition for scaffold verification.",
             visibility=Visibility.PUBLIC,
-            opens_at=datetime(2026, 4, 1, 0, 0, 0),
-            closes_at=datetime(2026, 5, 31, 23, 59, 59),
+            opens_at=datetime(2026, 4, 1, 0, 0, 0, tzinfo=UTC),
+            closes_at=datetime(2026, 5, 31, 23, 59, 59, tzinfo=UTC),
             tags=["design", "trial"],
         ),
         Competition(
@@ -65,8 +65,8 @@ async def _seed_memory_competitions(repository: DocumentCompetitionRepository) -
             title="2026 Fine Art Mock Jury",
             description="Sample public competition used by the in-memory local backend.",
             visibility=Visibility.PUBLIC,
-            opens_at=datetime(2026, 6, 1, 0, 0, 0),
-            closes_at=datetime(2026, 7, 15, 23, 59, 59),
+            opens_at=datetime(2026, 6, 1, 0, 0, 0, tzinfo=UTC),
+            closes_at=datetime(2026, 7, 15, 23, 59, 59, tzinfo=UTC),
             tags=["fine-art", "mock"],
         ),
     ]

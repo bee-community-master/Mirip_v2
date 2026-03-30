@@ -28,7 +28,10 @@ async def upsert_profile(
     current_user: CurrentUserDep,
     container: ContainerDep,
 ) -> ProfileResponse:
-    usecase = UpsertProfileUseCase(container.profile_repository)
+    usecase = UpsertProfileUseCase(
+        profile_repository=container.profile_repository,
+        portfolio_repository=container.portfolio_repository,
+    )
     profile = await usecase.execute(
         actor=current_user,
         command=UpsertProfileCommand(

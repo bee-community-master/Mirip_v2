@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import pytest
 import pytest_asyncio
 from asgi_lifespan import LifespanManager
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from mirip_backend.api.app import create_app
@@ -22,7 +25,7 @@ def _configure_test_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest_asyncio.fixture
-async def app():
+async def app() -> AsyncIterator[FastAPI]:
     instance = create_app()
     async with LifespanManager(instance):
         yield instance
@@ -30,7 +33,7 @@ async def app():
 
 
 @pytest_asyncio.fixture
-async def client(app):
+async def client(app: FastAPI) -> AsyncIterator[AsyncClient]:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as http_client:
         yield http_client

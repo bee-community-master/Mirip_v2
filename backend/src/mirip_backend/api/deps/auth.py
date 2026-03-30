@@ -18,4 +18,15 @@ async def get_current_user(
     return await container.auth_service.authenticate(authorization)
 
 
+async def get_optional_user(
+    request: Request,
+    container: ContainerDep,
+) -> AuthenticatedUser | None:
+    authorization = request.headers.get("Authorization")
+    if authorization is None:
+        return None
+    return await container.auth_service.authenticate(authorization)
+
+
 CurrentUserDep = Annotated[AuthenticatedUser, Depends(get_current_user)]
+OptionalCurrentUserDep = Annotated[AuthenticatedUser | None, Depends(get_optional_user)]

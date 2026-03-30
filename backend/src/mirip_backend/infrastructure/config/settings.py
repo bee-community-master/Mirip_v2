@@ -21,7 +21,7 @@ class ApiSettings(BaseModel):
 class FirebaseSettings(BaseModel):
     project_id: str | None = None
     credentials_path: str | None = None
-    allow_insecure_dev_auth: bool = True
+    allow_insecure_dev_auth: bool = False
     local_dev_token: str = "local-dev-token"
 
 
