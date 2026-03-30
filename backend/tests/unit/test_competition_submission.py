@@ -124,3 +124,49 @@ async def test_submission_rejects_closed_competition() -> None:
                 upload_id="upl-closed",
             ),
         )
+
+
+async def test_submission_rejects_pending_upload() -> None:
+    store = MemoryDocumentStore()
+    competition_repository = DocumentCompetitionRepository(store)
+    submission_repository = DocumentCompetitionSubmissionRepository(store)
+    upload_repository = DocumentUploadRepository(store)
+    now = utc_now()
+
+    await competition_repository.create(
+        Competition(
+            id="comp-open",
+            title="Open competition",
+            description="desc",
+            visibility=Visibility.PUBLIC,
+            opens_at=now - timedelta(days=1),
+            closes_at=now + timedelta(days=1),
+        )
+    )
+    await upload_repository.create(
+        UploadAsset(
+            id="upl-pending",
+            user_id="user-1",
+            filename="piece.png",
+            content_type="image/png",
+            size_bytes=100,
+            object_name="users/user-1/competition/upl-pending/piece.png",
+            status=UploadStatus.PENDING,
+            created_at=now,
+        )
+    )
+
+    usecase = CreateCompetitionSubmissionUseCase(
+        competition_repository=competition_repository,
+        submission_repository=submission_repository,
+        upload_repository=upload_repository,
+    )
+
+    with pytest.raises(ValidationError):
+        await usecase.execute(
+            actor=AuthenticatedUser(user_id="user-1"),
+            command=CreateCompetitionSubmissionCommand(
+                competition_id="comp-open",
+                upload_id="upl-pending",
+            ),
+        )

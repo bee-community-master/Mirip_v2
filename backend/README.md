@@ -17,6 +17,29 @@ uv sync --group dev
 uv run uvicorn mirip_backend.api.app:create_app --factory --reload
 ```
 
+## Local GCS Setup
+
+This pass supports a local runtime with:
+
+- `MIRIP_DATA_BACKEND=memory`
+- `MIRIP_STORAGE_BACKEND=gcs`
+- mocked auth enabled for local/test
+- stub worker inference only
+
+Use [`backend/.env.example`](./.env.example) as the starting point. The intended GCP setup is:
+
+- project display name: `mirip_v2`
+- project ID: `mirip-v2`
+- one GCS bucket such as `mirip-v2-assets`
+- one service account JSON with GCS object permissions
+
+Set `MIRIP_GCS__PROJECT_ID`, `MIRIP_GCS__BUCKET_NAME`, and `MIRIP_GCS__CREDENTIALS_PATH` in `.env`.
+`MIRIP_FIREBASE__ALLOW_INSECURE_DEV_AUTH=true` keeps authenticated routes usable without an
+`Authorization` header in local/test mode.
+
+This mode is for local API validation only. Memory-backed domain data is not shared across
+processes, so multi-process deployments still need Firestore for durable API/worker coordination.
+
 ## Commands
 
 ```bash
@@ -41,3 +64,12 @@ Key settings are grouped around:
 - `MIRIP_OBSERVABILITY__*`
 
 See `src/mirip_backend/infrastructure/config/settings.py` for the full shape.
+
+## Runtime Notes
+
+- `POST /v1/uploads/{upload_id}/complete` marks a signed upload as usable by the rest of the API.
+- `GET /v1/uploads` lists the current user's uploads and supports `category` and `status` filters.
+- `GET /v1/profiles/me`, `POST /v1/profiles/me/portfolio-items`, and
+  `GET /v1/profiles/me/portfolio-items` complete the editable profile flow.
+- Diagnosis jobs, competition submissions, and portfolio items now require uploads that have been
+  explicitly completed.

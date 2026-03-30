@@ -69,7 +69,12 @@ class DocumentUploadRepository:
         )
 
     async def list_by_user(self, user_id: str) -> list[UploadAsset]:
-        docs = await self._store.query(self.COLLECTION, filters=(("user_id", user_id),))
+        docs = await self._store.query(
+            self.COLLECTION,
+            filters=(("user_id", user_id),),
+            order_by="created_at",
+            descending=True,
+        )
         return [
             item for item in [await self.get(str(doc["id"])) for doc in docs] if item is not None
         ]

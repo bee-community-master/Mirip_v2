@@ -13,7 +13,7 @@ from mirip_backend.infrastructure.firestore.repositories import (
 )
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import JobStatus, UploadStatus
-from mirip_backend.shared.exceptions import AuthorizationError
+from mirip_backend.shared.exceptions import AuthorizationError, ValidationError
 from mirip_backend.usecases.diagnosis.create_job import (
     CreateDiagnosisJobCommand,
     CreateDiagnosisJobUseCase,
@@ -69,4 +69,30 @@ async def test_create_diagnosis_job_rejects_foreign_upload() -> None:
         await usecase.execute(
             actor=AuthenticatedUser(user_id="user-123"),
             command=CreateDiagnosisJobCommand(upload_ids=["upl-2"]),
+        )
+
+
+async def test_create_diagnosis_job_rejects_pending_upload() -> None:
+    store = MemoryDocumentStore()
+    upload_repository = DocumentUploadRepository(store)
+    job_repository = DocumentDiagnosisJobRepository(store)
+    await upload_repository.create(
+        UploadAsset(
+            id="upl-3",
+            user_id="user-123",
+            filename="piece.jpg",
+            content_type="image/jpeg",
+            size_bytes=2048,
+            object_name="users/user-123/diagnosis/upl-3/piece.jpg",
+            status=UploadStatus.PENDING,
+            created_at=utc_now(),
+        )
+    )
+
+    usecase = CreateDiagnosisJobUseCase(upload_repository, job_repository)
+
+    with pytest.raises(ValidationError):
+        await usecase.execute(
+            actor=AuthenticatedUser(user_id="user-123"),
+            command=CreateDiagnosisJobCommand(upload_ids=["upl-3"]),
         )

@@ -13,11 +13,9 @@ from mirip_backend.worker.result_writer import DiagnosisResultWriter
 async def test_diagnosis_job_flow(
     client: AsyncClient,
     app: FastAPI,
-    auth_headers: dict[str, str],
 ) -> None:
     upload_response = await client.post(
         "/v1/uploads",
-        headers=auth_headers,
         json={
             "filename": "portfolio.png",
             "content_type": "image/png",
@@ -29,9 +27,11 @@ async def test_diagnosis_job_flow(
     upload_payload = upload_response.json()
     upload_id = upload_payload["upload"]["id"]
 
+    complete_response = await client.post(f"/v1/uploads/{upload_id}/complete")
+    assert complete_response.status_code == 200
+
     job_response = await client.post(
         "/v1/diagnosis/jobs",
-        headers=auth_headers,
         json={
             "upload_ids": [upload_id],
             "job_type": "evaluate",
@@ -52,14 +52,52 @@ async def test_diagnosis_job_flow(
     )
     await poller.process_once()
 
-    status_response = await client.get(f"/v1/diagnosis/jobs/{job_id}", headers=auth_headers)
+    status_response = await client.get(f"/v1/diagnosis/jobs/{job_id}")
     assert status_response.status_code == 200
     status_payload = status_response.json()
     assert status_payload["job"]["status"] == "succeeded"
     assert status_payload["result"]["job_id"] == job_id
 
-    history_response = await client.get("/v1/diagnosis/history", headers=auth_headers)
+    credential_response = await client.post(
+        "/v1/credentials",
+        json={
+            "result_id": status_payload["result"]["id"],
+            "title": "Mirip Visual Diagnosis",
+            "visibility": "public",
+        },
+    )
+    assert credential_response.status_code == 200
+
+    portfolio_item_response = await client.post(
+        "/v1/profiles/me/portfolio-items",
+        json={
+            "title": "Portfolio Piece",
+            "description": "Generated in e2e flow",
+            "asset_upload_id": upload_id,
+            "visibility": "public",
+        },
+    )
+    assert portfolio_item_response.status_code == 201
+    portfolio_item_id = portfolio_item_response.json()["id"]
+
+    profile_response = await client.put(
+        "/v1/profiles/me",
+        json={
+            "handle": "mirip-e2e",
+            "display_name": "Mirip E2E User",
+            "bio": "E2E validation profile",
+            "visibility": "public",
+            "portfolio_item_ids": [portfolio_item_id],
+        },
+    )
+    assert profile_response.status_code == 200
+
+    history_response = await client.get("/v1/diagnosis/history")
     assert history_response.status_code == 200
     history_payload = history_response.json()
     assert history_payload["total"] == 1
     assert history_payload["items"][0]["job_id"] == job_id
+
+    public_profile_response = await client.get("/v1/profiles/mirip-e2e")
+    assert public_profile_response.status_code == 200
+    assert public_profile_response.json()["portfolio_items"][0]["id"] == portfolio_item_id

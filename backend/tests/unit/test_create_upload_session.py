@@ -30,6 +30,9 @@ class FakeSigner:
             headers={"content-type": content_type, **metadata},
         )
 
+    async def object_exists(self, *, object_name: str) -> bool:
+        return True
+
 
 async def test_create_upload_session_uses_user_scoped_object_path() -> None:
     repository = DocumentUploadRepository(MemoryDocumentStore())

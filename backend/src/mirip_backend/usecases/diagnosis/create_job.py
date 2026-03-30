@@ -10,8 +10,12 @@ from mirip_backend.domain.diagnosis.repositories import DiagnosisJobRepository
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import JobStatus
-from mirip_backend.shared.exceptions import AuthorizationError, ValidationError
+from mirip_backend.shared.exceptions import ValidationError
 from mirip_backend.shared.ids import new_id
+from mirip_backend.usecases.uploads.validation import (
+    load_owned_upload,
+    require_uploaded_asset,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -47,11 +51,16 @@ class CreateDiagnosisJobUseCase:
             raise ValidationError("Compare jobs require at least two uploads")
 
         for upload_id in command.upload_ids:
-            upload = await self._upload_repository.get(upload_id)
-            if upload is None:
-                raise ValidationError(f"Upload {upload_id} does not exist")
-            if upload.user_id != actor.user_id:
-                raise AuthorizationError("Upload does not belong to the authenticated user")
+            upload = await load_owned_upload(
+                upload_repository=self._upload_repository,
+                actor=actor,
+                upload_id=upload_id,
+                not_found_message=f"Upload {upload_id} does not exist",
+            )
+            require_uploaded_asset(
+                upload,
+                message="Diagnosis jobs require uploaded assets",
+            )
 
         now = utc_now()
         job = DiagnosisJob(

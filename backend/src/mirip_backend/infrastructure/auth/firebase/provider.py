@@ -42,13 +42,16 @@ class FirebaseAuthService:
                 firebase_admin.initialize_app(options={"projectId": self.settings.project_id})
             self._initialized = True
 
+    def build_insecure_dev_user(self) -> AuthenticatedUser:
+        return AuthenticatedUser(user_id="local-dev-user", email="dev@local.test")
+
     async def authenticate(self, authorization: str | None) -> AuthenticatedUser:
         if authorization is None or not authorization.startswith("Bearer "):
             raise AuthenticationError()
 
         token = authorization.removeprefix("Bearer ").strip()
         if self.settings.allow_insecure_dev_auth and token == self.settings.local_dev_token:
-            return AuthenticatedUser(user_id="local-dev-user", email="dev@local.test")
+            return self.build_insecure_dev_user()
 
         await asyncio.to_thread(self._initialize)
         if not self._initialized:
