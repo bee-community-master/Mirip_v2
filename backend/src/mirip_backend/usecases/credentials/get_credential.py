@@ -2,18 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from mirip_backend.domain.auth.models import AuthenticatedUser
 from mirip_backend.domain.credentials.entities import Credential
 from mirip_backend.domain.credentials.repositories import CredentialRepository
 from mirip_backend.shared.enums import Visibility
 from mirip_backend.shared.exceptions import NotFoundError
-
-
-@dataclass(slots=True, frozen=True)
-class CredentialView:
-    credential: Credential
 
 
 class GetCredentialUseCase:
@@ -27,7 +20,7 @@ class GetCredentialUseCase:
         *,
         actor: AuthenticatedUser | None,
         credential_id: str,
-    ) -> CredentialView:
+    ) -> Credential:
         credential = await self._credential_repository.get(credential_id)
         if credential is None:
             raise NotFoundError("Credential not found")
@@ -35,4 +28,4 @@ class GetCredentialUseCase:
             actor is None or credential.user_id != actor.user_id
         ):
             raise NotFoundError("Credential not found")
-        return CredentialView(credential=credential)
+        return credential

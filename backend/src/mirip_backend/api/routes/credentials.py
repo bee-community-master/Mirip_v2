@@ -52,8 +52,7 @@ async def get_credential(
     container: ContainerDep,
 ) -> CredentialResponse:
     usecase = GetCredentialUseCase(container.credential_repository)
-    view = await usecase.execute(actor=current_user, credential_id=credential_id)
-    credential = view.credential
+    credential = await usecase.execute(actor=current_user, credential_id=credential_id)
     return CredentialResponse(
         id=credential.id,
         result_id=credential.result_id,

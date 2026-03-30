@@ -8,6 +8,7 @@ import structlog
 
 from mirip_backend.infrastructure.config.container import build_container
 from mirip_backend.infrastructure.config.settings import get_settings
+from mirip_backend.infrastructure.logging.setup import configure_logging
 from mirip_backend.worker.claim import build_worker_id
 from mirip_backend.worker.inference.service import GpuInferenceService
 from mirip_backend.worker.poller import JobPoller
@@ -18,8 +19,10 @@ logger = structlog.get_logger(__name__)
 
 async def run_worker() -> None:
     settings = get_settings()
+    configure_logging(settings)
     container = await build_container(settings)
     worker_id = build_worker_id()
+    logger.info("worker.startup", worker_id=worker_id, mode=settings.worker.mode)
     poller = JobPoller(
         worker_id=worker_id,
         queue=container.job_queue,

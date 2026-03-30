@@ -14,32 +14,29 @@ from mirip_backend.infrastructure.firestore.repositories import (
 from mirip_backend.infrastructure.jobs.queue import JobQueueService
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import JobStatus
+from mirip_backend.worker.inference.service import InferenceOutput
 from mirip_backend.worker.poller import JobPoller
 from mirip_backend.worker.result_writer import DiagnosisResultWriter
 
 
-class SlowInferenceService:
+class HeartbeatAwareInferenceService:
     def __init__(self, repository: DocumentDiagnosisJobRepository) -> None:
         self._repository = repository
 
-    async def evaluate(self, job: DiagnosisJob):  # type: ignore[no-untyped-def]
+    async def evaluate(self, job: DiagnosisJob) -> InferenceOutput:
         await asyncio.sleep(1.05)
         current = await self._repository.get(job.id)
         assert current is not None
         assert current.lease_expires_at is not None
         assert job.lease_expires_at is not None
         assert current.lease_expires_at > job.lease_expires_at
-        return type(
-            "Output",
-            (),
-            {
-                "tier": "A",
-                "scores": {"composition": 90.0},
-                "probabilities": [],
-                "feedback": None,
-                "summary": "ok",
-            },
-        )()
+        return InferenceOutput(
+            tier="A",
+            scores={"composition": 90.0},
+            probabilities=[],
+            feedback=None,
+            summary="ok",
+        )
 
 
 async def test_job_poller_keeps_lease_alive_during_long_evaluation() -> None:
@@ -68,7 +65,7 @@ async def test_job_poller_keeps_lease_alive_during_long_evaluation() -> None:
             JobSettings(lease_seconds=1, heartbeat_interval_seconds=1, max_attempts=3),
             job_repository,
         ),
-        inference_service=SlowInferenceService(job_repository),
+        inference_service=HeartbeatAwareInferenceService(job_repository),
         result_writer=DiagnosisResultWriter(result_repository),
     )
 
