@@ -60,6 +60,5 @@ train/reports/*
 !/train/data/metadata/.gitkeep
 !/train/data/raw_images/.gitkeep
 
-train/training/data/*.csv
 train/training/data/*.json
 !train/training/data/README.md
