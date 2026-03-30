@@ -12,14 +12,17 @@ from mirip_backend.domain.competitions.repositories import (
 )
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.clock import utc_now
-from mirip_backend.shared.enums import UploadStatus, Visibility
+from mirip_backend.shared.enums import Visibility
 from mirip_backend.shared.exceptions import (
-    AuthorizationError,
     ConflictError,
     NotFoundError,
     ValidationError,
 )
 from mirip_backend.shared.ids import new_id
+from mirip_backend.usecases.uploads.validation import (
+    load_owned_upload,
+    require_uploaded_asset,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -57,13 +60,16 @@ class CreateCompetitionSubmissionUseCase:
         if competition.closes_at is not None and competition.closes_at < now:
             raise ValidationError("Competition submission window is closed")
 
-        upload = await self._upload_repository.get(command.upload_id)
-        if upload is None:
-            raise NotFoundError("Upload not found")
-        if upload.user_id != actor.user_id:
-            raise AuthorizationError("Upload ownership mismatch")
-        if upload.status != UploadStatus.UPLOADED:
-            raise ValidationError("Competition submissions require uploaded assets")
+        upload = await load_owned_upload(
+            upload_repository=self._upload_repository,
+            actor=actor,
+            upload_id=command.upload_id,
+            ownership_message="Upload ownership mismatch",
+        )
+        require_uploaded_asset(
+            upload,
+            message="Competition submissions require uploaded assets",
+        )
 
         if await self._submission_repository.exists_for_user(
             competition_id=command.competition_id,

@@ -9,9 +9,12 @@ from mirip_backend.domain.profiles.entities import PortfolioItem
 from mirip_backend.domain.profiles.repositories import PortfolioRepository
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.clock import utc_now
-from mirip_backend.shared.enums import UploadStatus, Visibility
-from mirip_backend.shared.exceptions import AuthorizationError, NotFoundError, ValidationError
+from mirip_backend.shared.enums import Visibility
 from mirip_backend.shared.ids import new_id
+from mirip_backend.usecases.uploads.validation import (
+    load_owned_upload,
+    require_uploaded_asset,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -39,13 +42,15 @@ class CreatePortfolioItemUseCase:
         actor: AuthenticatedUser,
         command: CreatePortfolioItemCommand,
     ) -> PortfolioItem:
-        upload = await self._upload_repository.get(command.asset_upload_id)
-        if upload is None:
-            raise NotFoundError("Upload not found")
-        if upload.user_id != actor.user_id:
-            raise AuthorizationError("Upload does not belong to the authenticated user")
-        if upload.status != UploadStatus.UPLOADED:
-            raise ValidationError("Portfolio items require an uploaded asset")
+        upload = await load_owned_upload(
+            upload_repository=self._upload_repository,
+            actor=actor,
+            upload_id=command.asset_upload_id,
+        )
+        require_uploaded_asset(
+            upload,
+            message="Portfolio items require an uploaded asset",
+        )
 
         item = PortfolioItem(
             id=new_id("port"),

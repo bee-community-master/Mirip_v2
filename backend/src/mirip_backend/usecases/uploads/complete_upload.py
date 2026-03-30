@@ -9,7 +9,8 @@ from mirip_backend.domain.common.ports import UploadSessionSigner
 from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.enums import UploadStatus
-from mirip_backend.shared.exceptions import AuthorizationError, NotFoundError, ValidationError
+from mirip_backend.shared.exceptions import ValidationError
+from mirip_backend.usecases.uploads.validation import load_owned_upload
 
 
 class CompleteUploadUseCase:
@@ -24,11 +25,11 @@ class CompleteUploadUseCase:
         self._storage_service = storage_service
 
     async def execute(self, *, actor: AuthenticatedUser, upload_id: str) -> UploadAsset:
-        upload = await self._upload_repository.get(upload_id)
-        if upload is None:
-            raise NotFoundError("Upload not found")
-        if upload.user_id != actor.user_id:
-            raise AuthorizationError("Upload does not belong to the authenticated user")
+        upload = await load_owned_upload(
+            upload_repository=self._upload_repository,
+            actor=actor,
+            upload_id=upload_id,
+        )
         if upload.status == UploadStatus.CONSUMED:
             raise ValidationError("Consumed uploads cannot be marked as uploaded")
         if upload.status == UploadStatus.UPLOADED:
