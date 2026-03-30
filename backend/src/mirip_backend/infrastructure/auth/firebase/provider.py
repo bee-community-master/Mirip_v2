@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from mirip_backend.domain.auth.models import AuthenticatedUser
@@ -46,13 +47,13 @@ class FirebaseAuthService:
         if self.settings.allow_insecure_dev_auth and token == self.settings.local_dev_token:
             return AuthenticatedUser(user_id="local-dev-user", email="dev@local.test")
 
-        self._initialize()
+        await asyncio.to_thread(self._initialize)
         if not self._initialized:
             raise DependencyError("Firebase auth is not configured for token verification")
 
         from firebase_admin import auth
 
-        decoded = auth.verify_id_token(token)
+        decoded = await asyncio.to_thread(auth.verify_id_token, token)
         email = decoded.get("email")
         roles = tuple(str(role) for role in decoded.get("roles", ()))
         return AuthenticatedUser(
@@ -67,5 +68,5 @@ class FirebaseAuthService:
             return HealthDependency(name="firebase_auth", status="healthy", detail="local-dev-auth")
         if not self.settings.project_id and not self.settings.credentials_path:
             return HealthDependency(name="firebase_auth", status="unknown", detail="not-configured")
-        self._initialize()
+        await asyncio.to_thread(self._initialize)
         return HealthDependency(name="firebase_auth", status="healthy", detail="initialized")

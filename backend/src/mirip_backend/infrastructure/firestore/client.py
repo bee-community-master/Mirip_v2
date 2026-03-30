@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -78,14 +79,20 @@ class FirestoreDocumentStore:
         return firestore.Client(project=self.project_id)
 
     async def put(self, collection: str, doc_id: str, data: dict[str, Any]) -> dict[str, Any]:
-        client = self._client()
-        client.collection(collection).document(doc_id).set(data)
+        def _put() -> None:
+            client = self._client()
+            client.collection(collection).document(doc_id).set(data)
+
+        await asyncio.to_thread(_put)
         return data
 
     async def get(self, collection: str, doc_id: str) -> dict[str, Any] | None:
-        client = self._client()
-        snapshot = client.collection(collection).document(doc_id).get()
-        return snapshot.to_dict() if snapshot.exists else None
+        def _get() -> dict[str, Any] | None:
+            client = self._client()
+            snapshot = client.collection(collection).document(doc_id).get()
+            return snapshot.to_dict() if snapshot.exists else None
+
+        return await asyncio.to_thread(_get)
 
     async def query(
         self,
@@ -97,15 +104,18 @@ class FirestoreDocumentStore:
         order_by: str | None = None,
         descending: bool = False,
     ) -> list[dict[str, Any]]:
-        client = self._client()
-        query = client.collection(collection)
-        for field_name, expected in filters:
-            query = query.where(field_name, "==", expected)
-        if order_by is not None:
-            direction = "DESCENDING" if descending else "ASCENDING"
-            query = query.order_by(order_by, direction=direction)
-        if offset:
-            query = query.offset(offset)
-        if limit is not None:
-            query = query.limit(limit)
-        return [snapshot.to_dict() for snapshot in query.stream()]
+        def _query() -> list[dict[str, Any]]:
+            client = self._client()
+            query = client.collection(collection)
+            for field_name, expected in filters:
+                query = query.where(field_name, "==", expected)
+            if order_by is not None:
+                direction = "DESCENDING" if descending else "ASCENDING"
+                query = query.order_by(order_by, direction=direction)
+            if offset:
+                query = query.offset(offset)
+            if limit is not None:
+                query = query.limit(limit)
+            return [snapshot.to_dict() for snapshot in query.stream()]
+
+        return await asyncio.to_thread(_query)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
@@ -38,16 +39,21 @@ class GCSStorageService:
                 expires_at=expires_at,
             )
 
-        client = self._client()
-        bucket = client.bucket(self.settings.bucket_name)
-        blob = bucket.blob(object_name)
-        blob.metadata = metadata
-        upload_url = blob.generate_signed_url(
-            version="v4",
-            expiration=timedelta(minutes=self.settings.upload_url_ttl_minutes),
-            method="PUT",
-            content_type=content_type,
-        )
+        def _create_signed_upload_url() -> str:
+            client = self._client()
+            bucket = client.bucket(self.settings.bucket_name)
+            blob = bucket.blob(object_name)
+            blob.metadata = metadata
+            return str(
+                blob.generate_signed_url(
+                    version="v4",
+                    expiration=timedelta(minutes=self.settings.upload_url_ttl_minutes),
+                    method="PUT",
+                    content_type=content_type,
+                )
+            )
+
+        upload_url = await asyncio.to_thread(_create_signed_upload_url)
         return SignedUploadSession(
             upload_url=upload_url,
             method="PUT",
@@ -59,9 +65,13 @@ class GCSStorageService:
     async def check(self) -> HealthDependency:
         if self.backend == "fake" or self.settings.bucket_name is None:
             return HealthDependency(name="gcs", status="healthy", detail="fake-storage")
-        client = self._client()
-        bucket = client.bucket(self.settings.bucket_name)
-        exists = bucket.exists()
+
+        def _bucket_exists() -> bool:
+            client = self._client()
+            bucket = client.bucket(self.settings.bucket_name)
+            return bool(bucket.exists())
+
+        exists = await asyncio.to_thread(_bucket_exists)
         return HealthDependency(
             name="gcs",
             status="healthy" if exists else "unknown",
