@@ -22,8 +22,18 @@
 	const tierOptions = ['FREE', 'STANDARD', 'PRO'] as const;
 	const universityOptions = ['HONGIK', 'KONKUK', 'KOOKMIN'] as const;
 	const expertOptions = ['AI', 'INSTRUCTOR', 'PROFESSOR'] as const;
+	const positioningGrades = ['S', 'A', 'B', 'C'] as const;
 	const validImageTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 	const maxUploadSizeInBytes = 10 * 1024 * 1024;
+	const expertGuideTabs = [
+		{ id: 'AI', icon: Sparkles, label: 'AI 분석' },
+		{ id: 'INSTRUCTOR', icon: BookOpen, label: '입시 강사 의견' },
+		{ id: 'PROFESSOR', icon: GraduationCap, label: '교수 의견' }
+	] as const satisfies ReadonlyArray<{
+		id: ExpertTab;
+		icon: typeof Sparkles;
+		label: string;
+	}>;
 	const tierOrder: Record<TierKey, number> = {
 		FREE: 0,
 		STANDARD: 1,
@@ -214,7 +224,7 @@
 				<div class="sticky top-20 z-30 flex justify-center">
 					<div class="glass-panel no-scrollbar flex items-center gap-2 overflow-x-auto rounded-full px-3 py-2">
 						<span class="px-3 text-[11px] font-black uppercase tracking-[0.24em] text-white/35">Demo</span>
-						{#each ['FREE', 'STANDARD', 'PRO'] as option}
+						{#each tierOptions as option}
 							<button
 								type="button"
 								class={`rounded-full px-4 py-2 text-sm font-bold transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300 ${
@@ -292,7 +302,7 @@
 							<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">전체 포지셔닝</h3>
 							<div class="relative mt-6 min-h-[320px] overflow-hidden rounded-[28px] border border-white/8 bg-night-900/70">
 								<div class="absolute left-1/2 top-10 bottom-10 w-px -translate-x-1/2 bg-gradient-to-b from-gold-350 via-white/60 to-azure-450"></div>
-								{#each ['S', 'A', 'B', 'C'] as grade, index}
+								{#each positioningGrades as grade, index}
 									<div
 										class="absolute left-1/2 -translate-x-1/2"
 										style={`top: ${12 + index * 26}%`}
@@ -391,7 +401,7 @@
 					<div class="relative">
 						<GlassCard className={`overflow-hidden rounded-[32px] ${!proUnlocked ? 'pointer-events-none select-none blur-md opacity-25' : ''}`}>
 							<div class="no-scrollbar flex overflow-x-auto border-b border-white/8">
-								{#each ['HONGIK', 'KONKUK', 'KOOKMIN'] as uni}
+								{#each universityOptions as uni}
 									<button
 										type="button"
 										class={`border-b-2 px-8 py-4 text-sm font-bold whitespace-nowrap transition-colors duration-200 ${
@@ -535,11 +545,7 @@
 								<div>
 									<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">맞춤 개선 가이드</h3>
 									<div class="mt-4 flex flex-wrap gap-2">
-										{#each [
-											{ id: 'AI', icon: Sparkles, label: 'AI 분석' },
-											{ id: 'INSTRUCTOR', icon: BookOpen, label: '입시 강사 의견' },
-											{ id: 'PROFESSOR', icon: GraduationCap, label: '교수 의견' }
-										] as tab}
+										{#each expertGuideTabs as tab}
 											<button
 												type="button"
 												class={`rounded-2xl border px-4 py-2.5 text-sm font-bold transition-colors duration-200 ${
