@@ -1,11 +1,17 @@
-# Mirip v2
+# Mirip v2 Workspace
 
-Mirip v2 is the next-generation application workspace for the Mirip product line.
-This change set introduces the backend foundation for the new runtime architecture.
+`Mirip_v2` is the shared workspace for the Mirip v2 frontend mock, backend scaffold, and training experiments.
+The repository is organized so each area can evolve independently while still sharing one root for docs and operational assets.
+
+## Frontend
+
+- Root `src/` contains the SvelteKit mock application used to validate the Mirip v2 UX flows.
+- The mock currently covers the home, diagnosis, competitions, and portfolio screens with local fixtures and reusable UI components.
+- Use the standard frontend scripts from the repository root: `npm run check`, `npm run test`, and `npm run build`.
 
 ## Backend
 
-The backend is designed for:
+The backend scaffold is designed for:
 
 - Cloud Run API
 - Firebase Auth + Firestore
@@ -13,3 +19,34 @@ The backend is designed for:
 - Spot GPU VM workers for heavyweight inference jobs
 
 See [BACKEND_V2_PLAN.md](./BACKEND_V2_PLAN.md) for the implementation plan and [backend/README.md](./backend/README.md) for local backend commands.
+
+## Training
+
+The training workspace prepares `#1 DINOv2 baseline reproduction` and `#2 DINOv3 teacher training` on top of Vast.ai-managed GPU environments.
+
+- [docs/vast_ai_preparation.md](./docs/vast_ai_preparation.md): Vast.ai operation notes
+- [training/dinov3_vast_plan.md](./training/dinov3_vast_plan.md): DINOv3 training and evaluation plan
+- [scripts/vast_ai_control.py](./scripts/vast_ai_control.py): Vast.ai REST API + SSH/rsync wrapper
+- [scripts/vast_ai_training_runner.py](./scripts/vast_ai_training_runner.py): remote bootstrap/smoke/full stage runner
+
+### Training quick start
+
+```bash
+cd <repo-root>
+cp .env.example .env
+export $(grep -v '^#' .env | xargs)
+
+python3 scripts/vast_ai_control.py search --config configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml
+python3 scripts/vast_ai_control.py create --config configs/vast_rtx_pro_4500_blackwell_32gb_ondemand.toml --attach-ssh
+python3 scripts/vast_ai_control.py wait --instance-id <INSTANCE_ID>
+python3 scripts/vast_ai_control.py ssh --instance-id <INSTANCE_ID>
+```
+
+### Training pipeline
+
+```bash
+python3 training/prepare_snapshot.py --dry-run
+python3 training/build_pairs.py --manifest training/data/snapshot_manifest.csv --dry-run
+python3 scripts/vast_ai_training_runner.py print-command --stage bootstrap
+python3 scripts/vast_ai_training_runner.py print-command --stage smoke
+```
