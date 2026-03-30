@@ -39,11 +39,53 @@ def _resolve_image_size(config: dict[str, Any], fallback: int) -> int:
     return int(fallback)
 
 
+def _resolve_resize_config(config: dict[str, Any], fallback: int) -> dict[str, int]:
+    candidate = config.get("size")
+    if isinstance(candidate, int):
+        return {"shortest_edge": int(candidate)}
+    if isinstance(candidate, dict):
+        if "height" in candidate and "width" in candidate:
+            return {
+                "height": int(candidate["height"]),
+                "width": int(candidate["width"]),
+            }
+        for key in ("shortest_edge", "longest_edge"):
+            value = candidate.get(key)
+            if value is not None:
+                return {key: int(value)}
+    return {"height": int(fallback), "width": int(fallback)}
+
+
+def _resolve_crop_size(candidate: Any) -> tuple[int, int] | None:
+    if isinstance(candidate, int):
+        size = int(candidate)
+        return (size, size)
+    if isinstance(candidate, dict) and "height" in candidate and "width" in candidate:
+        return (int(candidate["height"]), int(candidate["width"]))
+    return None
+
+
+def _resolve_resample(candidate: Any) -> Image.Resampling:
+    try:
+        if isinstance(candidate, str):
+            return Image.Resampling[candidate.upper()]
+        if candidate is not None:
+            return Image.Resampling(int(candidate))
+    except (KeyError, ValueError):
+        pass
+    return Image.Resampling.BICUBIC
+
+
 @dataclass(slots=True, frozen=True)
 class ImagePreprocessor:
     image_size: int
+    resize_config: dict[str, int]
+    crop_size: tuple[int, int] | None
     image_mean: tuple[float, float, float]
     image_std: tuple[float, float, float]
+    do_resize: bool
+    do_center_crop: bool
+    resample: Image.Resampling
     do_rescale: bool
     rescale_factor: float
     do_normalize: bool
@@ -55,8 +97,13 @@ class ImagePreprocessor:
         image_std = tuple(float(value) for value in config.get("image_std", DEFAULT_IMAGE_STD))
         return cls(
             image_size=_resolve_image_size(config, fallback_image_size),
+            resize_config=_resolve_resize_config(config, fallback_image_size),
+            crop_size=_resolve_crop_size(config.get("crop_size")),
             image_mean=(image_mean[0], image_mean[1], image_mean[2]),
             image_std=(image_std[0], image_std[1], image_std[2]),
+            do_resize=bool(config.get("do_resize", True)),
+            do_center_crop=bool(config.get("do_center_crop", "crop_size" in config)),
+            resample=_resolve_resample(config.get("resample")),
             do_rescale=bool(config.get("do_rescale", True)),
             rescale_factor=float(config.get("rescale_factor", 1.0 / 255.0)),
             do_normalize=bool(config.get("do_normalize", True)),
@@ -64,10 +111,10 @@ class ImagePreprocessor:
 
     def preprocess_bytes(self, image_bytes: bytes) -> np.ndarray:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image = image.resize(
-            (self.image_size, self.image_size),
-            resample=Image.Resampling.BICUBIC,
-        )
+        if self.do_resize:
+            image = self._resize_image(image)
+        if self.do_center_crop and self.crop_size is not None:
+            image = self._center_crop_image(image)
         array = np.asarray(image, dtype=np.float32)
         if self.do_rescale:
             array *= self.rescale_factor
@@ -76,6 +123,31 @@ class ImagePreprocessor:
             std = np.asarray(self.image_std, dtype=np.float32)
             array = (array - mean) / std
         return np.transpose(array, (2, 0, 1))[None, ...].astype(np.float32)
+
+    def _resize_image(self, image: Image.Image) -> Image.Image:
+        if "height" in self.resize_config and "width" in self.resize_config:
+            return image.resize(
+                (self.resize_config["width"], self.resize_config["height"]),
+                resample=self.resample,
+            )
+
+        width, height = image.size
+        if "shortest_edge" in self.resize_config:
+            scale = self.resize_config["shortest_edge"] / float(min(width, height))
+        else:
+            scale = self.resize_config["longest_edge"] / float(max(width, height))
+        resized_width = max(1, int(round(width * scale)))
+        resized_height = max(1, int(round(height * scale)))
+        return image.resize((resized_width, resized_height), resample=self.resample)
+
+    def _center_crop_image(self, image: Image.Image) -> Image.Image:
+        if self.crop_size is None:
+            return image
+        target_height, target_width = self.crop_size
+        width, height = image.size
+        left = max((width - target_width) // 2, 0)
+        top = max((height - target_height) // 2, 0)
+        return image.crop((left, top, left + target_width, top + target_height))
 
 
 @dataclass(slots=True, frozen=True)

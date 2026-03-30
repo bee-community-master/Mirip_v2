@@ -116,16 +116,19 @@ class GCSStorageService:
             raise DependencyError("GCS download is unavailable when storage backend is fake")
 
         destination = Path(destination_dir)
+        normalized_prefix = self._normalize_prefix(prefix)
 
         def _download() -> list[Path]:
             destination.mkdir(parents=True, exist_ok=True)
             client = self._client()
             bucket = client.bucket(bucket_name)
             downloaded: list[Path] = []
-            for blob in client.list_blobs(bucket, prefix=prefix):
+            for blob in client.list_blobs(bucket, prefix=normalized_prefix):
                 if blob.name.endswith("/"):
                     continue
-                relative = blob.name[len(prefix):].lstrip("/") if prefix else blob.name
+                if not blob.name.startswith(normalized_prefix):
+                    continue
+                relative = blob.name[len(normalized_prefix):]
                 target = destination / relative
                 target.parent.mkdir(parents=True, exist_ok=True)
                 blob.download_to_filename(str(target))
@@ -142,6 +145,10 @@ class GCSStorageService:
         remainder = gcs_uri.removeprefix("gs://")
         bucket, _, prefix = remainder.partition("/")
         return bucket, prefix
+
+    @staticmethod
+    def _normalize_prefix(prefix: str) -> str:
+        return prefix.rstrip("/") + "/"
 
     async def check(self) -> HealthDependency:
         if self.backend == "fake" or self.settings.bucket_name is None:
