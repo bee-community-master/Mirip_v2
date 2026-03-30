@@ -20,7 +20,14 @@ class GCSStorageService:
     def _client(self) -> Any:
         from google.cloud import storage  # type: ignore[attr-defined]
 
-        return storage.Client()
+        if self.settings.credentials_path is not None:
+            from google.oauth2 import service_account
+
+            credentials = service_account.Credentials.from_service_account_file(
+                self.settings.credentials_path
+            )  # type: ignore[no-untyped-call]
+            return storage.Client(project=self.settings.project_id, credentials=credentials)
+        return storage.Client(project=self.settings.project_id)
 
     async def create_upload_session(
         self,

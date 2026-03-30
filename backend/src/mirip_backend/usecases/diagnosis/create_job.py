@@ -9,7 +9,7 @@ from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 from mirip_backend.domain.diagnosis.repositories import DiagnosisJobRepository
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.clock import utc_now
-from mirip_backend.shared.enums import JobStatus
+from mirip_backend.shared.enums import JobStatus, UploadStatus
 from mirip_backend.shared.exceptions import AuthorizationError, ValidationError
 from mirip_backend.shared.ids import new_id
 
@@ -52,6 +52,8 @@ class CreateDiagnosisJobUseCase:
                 raise ValidationError(f"Upload {upload_id} does not exist")
             if upload.user_id != actor.user_id:
                 raise AuthorizationError("Upload does not belong to the authenticated user")
+            if upload.status != UploadStatus.UPLOADED:
+                raise ValidationError("Diagnosis jobs require uploaded assets")
 
         now = utc_now()
         job = DiagnosisJob(

@@ -10,11 +10,20 @@ from mirip_backend.api.deps.services import ContainerDep
 from mirip_backend.domain.auth.models import AuthenticatedUser
 
 
+def _should_use_insecure_dev_auth(container: ContainerDep) -> bool:
+    return (
+        container.settings.app_env in {"local", "test"}
+        and container.settings.firebase.allow_insecure_dev_auth
+    )
+
+
 async def get_current_user(
     request: Request,
     container: ContainerDep,
 ) -> AuthenticatedUser:
     authorization = request.headers.get("Authorization")
+    if authorization is None and _should_use_insecure_dev_auth(container):
+        return container.auth_service.build_insecure_dev_user()
     return await container.auth_service.authenticate(authorization)
 
 

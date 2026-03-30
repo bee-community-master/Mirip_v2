@@ -38,3 +38,17 @@ class ProfileResponse(BaseModel):
 class PublicProfileResponse(BaseModel):
     profile: ProfileResponse
     portfolio_items: list[PortfolioItemResponse]
+
+
+class CreatePortfolioItemRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    description: str | None = Field(default=None, max_length=1000)
+    asset_upload_id: str = Field(min_length=1, max_length=64)
+    visibility: Literal["public", "private"] = "public"
+
+
+class PortfolioItemListResponse(BaseModel):
+    items: list[PortfolioItemResponse]
+    total: int
+    limit: int
+    offset: int

@@ -12,7 +12,7 @@ from mirip_backend.domain.competitions.repositories import (
 )
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.clock import utc_now
-from mirip_backend.shared.enums import Visibility
+from mirip_backend.shared.enums import UploadStatus, Visibility
 from mirip_backend.shared.exceptions import (
     AuthorizationError,
     ConflictError,
@@ -62,6 +62,8 @@ class CreateCompetitionSubmissionUseCase:
             raise NotFoundError("Upload not found")
         if upload.user_id != actor.user_id:
             raise AuthorizationError("Upload ownership mismatch")
+        if upload.status != UploadStatus.UPLOADED:
+            raise ValidationError("Competition submissions require uploaded assets")
 
         if await self._submission_repository.exists_for_user(
             competition_id=command.competition_id,

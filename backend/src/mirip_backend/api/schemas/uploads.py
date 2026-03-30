@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,6 +21,7 @@ class UploadAssetResponse(BaseModel):
     content_type: str
     size_bytes: int
     object_name: str
+    category: str | None = None
     status: str
     created_at: datetime
 
@@ -35,3 +37,17 @@ class UploadSessionResponse(BaseModel):
 class CreateUploadSessionResponse(BaseModel):
     upload: UploadAssetResponse
     session: UploadSessionResponse
+
+
+class CompleteUploadResponse(BaseModel):
+    upload: UploadAssetResponse
+
+
+class UploadListResponse(BaseModel):
+    items: list[UploadAssetResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+UploadStatusLiteral = Literal["pending", "uploaded", "consumed"]

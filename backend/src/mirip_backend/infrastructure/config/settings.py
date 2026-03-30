@@ -26,7 +26,9 @@ class FirebaseSettings(BaseModel):
 
 
 class GCSSettings(BaseModel):
+    project_id: str | None = None
     bucket_name: str | None = None
+    credentials_path: str | None = None
     upload_url_ttl_minutes: int = 15
 
 

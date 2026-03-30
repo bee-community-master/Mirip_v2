@@ -72,5 +72,12 @@ plugins = []
 packages = ["mirip_backend"]
 
 [[tool.mypy.overrides]]
-module = ["firebase_admin", "firebase_admin.*", "google.cloud", "google.cloud.*"]
+module = [
+  "firebase_admin",
+  "firebase_admin.*",
+  "google.cloud",
+  "google.cloud.*",
+  "google.oauth2",
+  "google.oauth2.*",
+]
 ignore_missing_imports = true
