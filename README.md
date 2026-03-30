@@ -27,7 +27,7 @@ The training workspace under `train/` prepares `#1 DINOv2 baseline reproduction`
 - [train/docs/vast_ai_preparation.md](./train/docs/vast_ai_preparation.md): Vast.ai operation notes
 - [train/training/dinov3_vast_plan.md](./train/training/dinov3_vast_plan.md): DINOv3 training and evaluation plan
 - [train/scripts/vast_ai_control.py](./train/scripts/vast_ai_control.py): Vast.ai REST API + SSH/rsync wrapper
-- [train/scripts/vast_ai_training_runner.py](./train/scripts/vast_ai_training_runner.py): remote bootstrap/smoke/full stage runner
+- [train/scripts/vast_ai_training_runner.py](./train/scripts/vast_ai_training_runner.py): remote bootstrap/validate-upload/smoke/full stage runner
 
 ### Training quick start
 
@@ -45,8 +45,11 @@ python3 train/scripts/vast_ai_control.py ssh --instance-id <INSTANCE_ID>
 ### Training pipeline
 
 ```bash
-python3 train/training/prepare_snapshot.py --dry-run
-python3 train/training/build_pairs.py --manifest train/training/data/snapshot_manifest.csv --dry-run
+python3 train/training/validate_training_readiness.py
+python3 train/training/prepare_snapshot.py
+python3 train/training/build_pairs.py --manifest train/training/data/snapshot_manifest.csv --output-dir train/training/data
+python3 train/training/validate_training_readiness.py --mode prepared
 python3 train/scripts/vast_ai_training_runner.py print-command --stage bootstrap
+python3 train/scripts/vast_ai_training_runner.py print-command --stage validate-upload
 python3 train/scripts/vast_ai_training_runner.py print-command --stage smoke
 ```

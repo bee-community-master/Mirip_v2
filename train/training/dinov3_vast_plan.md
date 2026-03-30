@@ -21,7 +21,7 @@
   - split: image 기준 `80/10/10`, seed `42`
   - pair: same-dept 50%, cross-dept 50%
   - 최소 `tier_score` gap `5.0`
-  - 이미지당 최대 등장 횟수 `20`
+  - 이미지당 최대 등장 횟수 `30`
   - same-dept에서 `재현작` 우선
   - 목표 pair 수를 채우지 못하면 partial output을 남기고 즉시 실패한다.
 
@@ -66,18 +66,21 @@
 
 ## Vast.ai Runbook
 
-1. crawl 완료 후 local snapshot manifest 생성
-2. local에서 JPG 변환 + metadata path 정규화
-3. `train/training/validate_training_readiness.py` 실행
-4. local에서 `train/training/data` 재생성
-5. Vast offer search
-6. 인스턴스 create + SSH attach + wait
-7. `Mirip_v2` 학습 관련 파일과 staged `train/data`를 rsync 업로드
-8. remote bootstrap: Python env, `transformers`/`wandb` 등 설치
-9. smoke run
-10. smoke 통과 시 full run
-11. `train/checkpoints`, `train/reports`, `train/anchors`를 local로 회수
-12. 인스턴스 destroy
+1. crawl 종료 후 `train/data`를 freeze한다.
+2. local에서 JPG 변환 + metadata path 정규화를 끝낸다.
+3. `python3 train/training/validate_training_readiness.py`
+4. `python3 train/training/prepare_snapshot.py`
+5. `python3 train/training/build_pairs.py`
+6. `python3 train/training/validate_training_readiness.py --mode prepared`
+7. Vast offer search
+8. 인스턴스 create + SSH attach + wait
+9. `Mirip_v2/train/data`, `Mirip_v2/train/training/data`, `Mirip_v2/train/reports`를 rsync 업로드
+10. remote bootstrap: Python env, `transformers`/`wandb` 등 설치
+11. remote `validate-upload` 실행
+12. smoke run
+13. smoke 통과 시 full run
+14. `train/checkpoints`, `train/reports`, `train/anchors`를 local로 회수
+15. 인스턴스 destroy
 
 Smoke check:
 

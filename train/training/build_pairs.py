@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--total-pairs", type=int, default=50_000)
     parser.add_argument("--same-dept-ratio", type=float, default=0.5)
     parser.add_argument("--min-score-gap", type=float, default=5.0)
-    parser.add_argument("--max-appearances", type=int, default=20)
+    parser.add_argument("--max-appearances", type=int, default=30)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()

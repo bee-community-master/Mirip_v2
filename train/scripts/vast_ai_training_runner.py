@@ -70,56 +70,54 @@ def _build_bootstrap_command(remote_root: str) -> str:
     return _bash_command(_bootstrap_parts(remote_root))
 
 
-def _prepare_data_parts(remote_root: str) -> list[str]:
+def _validate_upload_parts(remote_root: str) -> list[str]:
     python_bin = _remote_python(remote_root)
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --metadata-dir data/metadata --image-root data --report reports/readiness_report.json",
-        f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest training/data/snapshot_manifest.csv --report reports/snapshot_report.json",
-        f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest training/data/snapshot_manifest.csv --output-dir training/data --total-pairs 50000",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest training/data/snapshot_manifest.csv --prepared-dir training/data --baseline-readiness-report reports/readiness_report.json --baseline-snapshot-report reports/snapshot_report.json --total-pairs 50000 --max-appearances 30 --report reports/prepared_readiness_report.json",
     ]
 
 
-def _build_prepare_data_command(remote_root: str) -> str:
-    return _bash_command(_prepare_data_parts(remote_root))
+def _build_validate_upload_command(remote_root: str) -> str:
+    return _bash_command(_validate_upload_parts(remote_root))
 
 
 def _build_smoke_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     checkpoint_dir = "checkpoints/dinov3_vitl16/smoke"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
-    parts = _prepare_data_parts(remote_root)
-    parts.extend(
+    return _bash_command(
         [
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
             f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 1 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report reports/dinov3_vitl16_smoke_train.json",
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output anchors/anchors.pt --report reports/dinov3_vitl16_smoke_anchors.json",
             f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --output reports/dinov3_vitl16_smoke.json",
         ]
     )
-    return _bash_command(parts)
 
 
 def _build_full_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     checkpoint_dir = "checkpoints/dinov3_vitl16/full"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
-    parts = _prepare_data_parts(remote_root)
-    parts.extend(
+    return _bash_command(
         [
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
             f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 50 --batch-size 8 --gradient-accumulation-steps 8 --num-workers 4 --report reports/dinov3_vitl16_full_train.json",
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output anchors/anchors.pt --report reports/dinov3_vitl16_full_anchors.json",
             f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --output reports/dinov3_vitl16_full.json",
         ]
     )
-    return _bash_command(parts)
 
 
 def build_stage_command(stage: str, remote_root: str) -> str:
     if stage == "bootstrap":
         return _build_bootstrap_command(remote_root)
-    if stage == "prepare-data":
-        return _build_prepare_data_command(remote_root)
+    if stage == "validate-upload":
+        return _build_validate_upload_command(remote_root)
     if stage == "smoke":
         return _build_smoke_command(remote_root)
     if stage == "full":
@@ -168,7 +166,7 @@ def parse_args() -> argparse.Namespace:
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--config", default=TRAIN_CONFIG_PATH)
-    common.add_argument("--stage", choices=["bootstrap", "prepare-data", "smoke", "full"], required=True)
+    common.add_argument("--stage", choices=["bootstrap", "validate-upload", "smoke", "full"], required=True)
 
     print_cmd = subparsers.add_parser("print-command", parents=[common], help="Print the remote command for a stage")
 

@@ -27,6 +27,7 @@ sync_paths = [
   "data",
   "configs",
   "docs",
+  "reports",
   "scripts",
   "training",
   "roadmap.md",

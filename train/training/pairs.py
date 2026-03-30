@@ -191,7 +191,7 @@ def generate_pairs(
     total_pairs: int,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
-    max_appearances: int = 20,
+    max_appearances: int = 30,
     seed: int = 42,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rng = random.Random(seed)
@@ -253,7 +253,7 @@ def build_pair_outputs(
     total_pairs: int = 50_000,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
-    max_appearances: int = 20,
+    max_appearances: int = 30,
     seed: int = 42,
     strict: bool = True,
 ) -> dict[str, Any]:
