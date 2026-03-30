@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import pytest
+
 from mirip_backend.domain.auth.models import AuthenticatedUser
 from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.infrastructure.firestore.client import MemoryDocumentStore
 from mirip_backend.infrastructure.firestore.repositories import DocumentUploadRepository
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import UploadStatus
+from mirip_backend.shared.exceptions import ValidationError
 from mirip_backend.usecases.uploads.complete_upload import CompleteUploadUseCase
 from mirip_backend.usecases.uploads.list_uploads import ListUploadsQuery, ListUploadsUseCase
+
+
+class FakeStorageService:
+    def __init__(self, *, exists: bool) -> None:
+        self._exists = exists
+
+    async def object_exists(self, *, object_name: str) -> bool:
+        return self._exists
 
 
 async def test_complete_upload_marks_pending_upload_as_uploaded() -> None:
@@ -28,10 +39,32 @@ async def test_complete_upload_marks_pending_upload_as_uploaded() -> None:
         )
     )
 
-    usecase = CompleteUploadUseCase(repository)
+    usecase = CompleteUploadUseCase(repository, FakeStorageService(exists=True))
     upload = await usecase.execute(actor=AuthenticatedUser(user_id="user-1"), upload_id="upl-1")
 
     assert upload.status == UploadStatus.UPLOADED
+
+
+async def test_complete_upload_rejects_missing_storage_object() -> None:
+    repository = DocumentUploadRepository(MemoryDocumentStore())
+    await repository.create(
+        UploadAsset(
+            id="upl-2",
+            user_id="user-1",
+            filename="piece.png",
+            content_type="image/png",
+            size_bytes=128,
+            object_name="users/user-1/diagnosis/upl-2/piece.png",
+            status=UploadStatus.PENDING,
+            created_at=utc_now(),
+            metadata={"category": "diagnosis"},
+        )
+    )
+
+    usecase = CompleteUploadUseCase(repository, FakeStorageService(exists=False))
+
+    with pytest.raises(ValidationError):
+        await usecase.execute(actor=AuthenticatedUser(user_id="user-1"), upload_id="upl-2")
 
 
 async def test_list_uploads_filters_by_category_and_status() -> None:

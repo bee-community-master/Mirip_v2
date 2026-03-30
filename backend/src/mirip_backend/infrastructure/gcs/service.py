@@ -69,6 +69,18 @@ class GCSStorageService:
             expires_at=expires_at,
         )
 
+    async def object_exists(self, *, object_name: str) -> bool:
+        if self.backend == "fake" or self.settings.bucket_name is None:
+            return True
+
+        def _blob_exists() -> bool:
+            client = self._client()
+            bucket = client.bucket(self.settings.bucket_name)
+            blob = bucket.blob(object_name)
+            return bool(blob.exists())
+
+        return await asyncio.to_thread(_blob_exists)
+
     async def check(self) -> HealthDependency:
         if self.backend == "fake" or self.settings.bucket_name is None:
             return HealthDependency(name="gcs", status="healthy", detail="fake-storage")

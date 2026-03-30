@@ -106,6 +106,6 @@ async def complete_upload(
     current_user: CurrentUserDep,
     container: ContainerDep,
 ) -> CompleteUploadResponse:
-    usecase = CompleteUploadUseCase(container.upload_repository)
+    usecase = CompleteUploadUseCase(container.upload_repository, container.storage_service)
     upload = await usecase.execute(actor=current_user, upload_id=upload_id)
     return CompleteUploadResponse(upload=_to_upload_response(upload))
