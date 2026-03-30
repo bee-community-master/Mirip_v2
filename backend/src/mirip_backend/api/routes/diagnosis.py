@@ -60,6 +60,9 @@ async def create_job(
     usecase = CreateDiagnosisJobUseCase(
         upload_repository=container.upload_repository,
         job_repository=container.diagnosis_job_repository,
+        vm_launcher=container.compute_launcher,
+        worker_model_uri=container.settings.worker.model_uri,
+        worker_mode=container.settings.worker.mode,
     )
     job = await usecase.execute(
         actor=current_user,

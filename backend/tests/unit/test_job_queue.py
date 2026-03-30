@@ -105,3 +105,31 @@ async def test_queue_heartbeat_extends_lease_without_changing_status() -> None:
     assert heartbeated.lease_owner == "worker-a"
     assert heartbeated.lease_expires_at is not None
     assert heartbeated.lease_expires_at > now
+
+
+async def test_queue_can_lease_specific_target_job() -> None:
+    repository = DocumentDiagnosisJobRepository(MemoryDocumentStore())
+    now = utc_now()
+    await repository.create(
+        DiagnosisJob(
+            id="job-target",
+            user_id="user-1",
+            upload_ids=["upl-1"],
+            job_type="evaluate",
+            department="visual_design",
+            include_feedback=True,
+            theme=None,
+            language="ko",
+            status=JobStatus.QUEUED,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    queue = JobQueueService(JobSettings(lease_seconds=60, max_attempts=3), repository)
+
+    leased = await queue.lease_job("job-target", worker_id="worker-1")
+
+    assert leased is not None
+    assert leased.id == "job-target"
+    assert leased.status == JobStatus.LEASED
+    assert leased.lease_owner == "worker-1"

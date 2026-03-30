@@ -40,9 +40,23 @@ class JobSettings(BaseModel):
 
 
 class WorkerSettings(BaseModel):
-    mode: Literal["stub", "gpu"] = "stub"
+    mode: Literal["stub", "cpu_onnx", "gpu_torch"] = "stub"
     model_uri: str | None = None
     run_once: bool = False
+    target_job_id: str | None = None
+    local_model_cache_dir: str = "/tmp/mirip-model-cache"
+
+
+class ComputeSettings(BaseModel):
+    enabled: bool = False
+    project_id: str | None = None
+    zone: str | None = None
+    instance_template: str | None = None
+    service_account: str | None = None
+    subnetwork: str | None = None
+    instance_name: str | None = None
+    delete_self_on_completion: bool = True
+    operation_timeout_seconds: int = 300
 
 
 class ObservabilitySettings(BaseModel):
@@ -69,6 +83,7 @@ class Settings(BaseSettings):
     gcs: GCSSettings = Field(default_factory=GCSSettings)
     job: JobSettings = Field(default_factory=JobSettings)
     worker: WorkerSettings = Field(default_factory=WorkerSettings)
+    compute: ComputeSettings = Field(default_factory=ComputeSettings)
     observability: ObservabilitySettings = Field(default_factory=ObservabilitySettings)
 
 
