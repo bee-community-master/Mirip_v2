@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import torch
+
 from .bundle import ServingBundleManifest, sha256sum, write_manifest
+from training.utils import project_relative_path, resolve_model_source, resolve_project_path
 
 
 @dataclass(slots=True)
@@ -18,6 +21,8 @@ class PromotionDecision:
 
 
 THREAD_SWEEP = (8, 12, 16)
+DIAGNOSIS_HEAD_FILENAME = "diagnosis_head.pt"
+ANCHORS_FILENAME = "anchors.pt"
 
 
 def resolve_int8_tier_agreement(raw_value: float | None) -> float:
@@ -57,6 +62,123 @@ def write_json(path: str | Path, payload: dict[str, Any]) -> Path:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return target
+
+
+def _cpu_state_dict(state_dict: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in state_dict.items():
+        if torch.is_tensor(value):
+            payload[key] = value.detach().cpu()
+        else:
+            payload[key] = value
+    return payload
+
+
+def build_diagnosis_head_payload(
+    *,
+    model_name: str,
+    feature_dim: int,
+    projector_hidden_dim: int,
+    projector_output_dim: int,
+    dropout: float,
+    projector_state_dict: dict[str, Any],
+    score_head_state_dict: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": "1.0",
+        "model_name": model_name,
+        "feature_dim": int(feature_dim),
+        "projector_hidden_dim": int(projector_hidden_dim),
+        "projector_output_dim": int(projector_output_dim),
+        "dropout": float(dropout),
+        "projector_state_dict": _cpu_state_dict(projector_state_dict),
+        "score_head_state_dict": _cpu_state_dict(score_head_state_dict),
+    }
+
+
+def write_diagnosis_artifacts(
+    *,
+    bundle_dir: str | Path,
+    diagnosis_head_payload: dict[str, Any],
+    anchors_path: str | Path,
+) -> dict[str, str]:
+    bundle_path = Path(bundle_dir)
+    bundle_path.mkdir(parents=True, exist_ok=True)
+
+    diagnosis_head_target = bundle_path / DIAGNOSIS_HEAD_FILENAME
+    torch.save(diagnosis_head_payload, diagnosis_head_target)
+
+    anchors_source = resolve_project_path(anchors_path)
+    anchors_target = bundle_path / ANCHORS_FILENAME
+    shutil.copy2(anchors_source, anchors_target)
+
+    return {
+        "diagnosis_head": diagnosis_head_target.name,
+        "anchors": anchors_target.name,
+    }
+
+
+def validate_diagnosis_artifacts(
+    *,
+    bundle_model_source: str | Path,
+    backbone_hidden_size: int,
+    checkpoint_path: str | Path,
+    checkpoint_config: dict[str, Any],
+    diagnosis_head_payload: dict[str, Any],
+    anchors_payload: dict[str, Any],
+) -> None:
+    expected_model_source = Path(resolve_model_source(str(bundle_model_source))).resolve()
+    checkpoint_model_source = Path(
+        resolve_model_source(str(checkpoint_config.get("model_name", "")))
+    ).resolve()
+    if checkpoint_model_source != expected_model_source:
+        raise ValueError(
+            "Checkpoint model_name must point at the same student export directory as --backbone-dir"
+        )
+
+    feature_dim = int(diagnosis_head_payload["feature_dim"])
+    if feature_dim != int(backbone_hidden_size):
+        raise ValueError(
+            "Diagnosis head feature_dim does not match the backbone hidden_size exported by the student"
+        )
+
+    metadata = dict(anchors_payload.get("metadata", {}))
+    anchor_model_source_raw = metadata.get("model_source") or metadata.get("model_name")
+    if not anchor_model_source_raw:
+        raise ValueError("Anchors metadata is missing model_source/model_name")
+    anchor_model_source = Path(resolve_model_source(str(anchor_model_source_raw))).resolve()
+    if anchor_model_source != expected_model_source:
+        raise ValueError("Anchors were not built from the same student export directory")
+
+    expected_checkpoint_relative = project_relative_path(checkpoint_path)
+    anchor_checkpoint_relative = metadata.get("checkpoint_relative")
+    if anchor_checkpoint_relative is None:
+        raise ValueError("Anchors metadata is missing checkpoint_relative")
+    if str(anchor_checkpoint_relative) != expected_checkpoint_relative:
+        raise ValueError("Anchors were not built from the provided checkpoint")
+
+    anchor_feature_dim = metadata.get("feature_dim")
+    if anchor_feature_dim is None or int(anchor_feature_dim) != feature_dim:
+        raise ValueError("Anchors feature_dim does not match the diagnosis head")
+
+    expected_projector_output_dim = int(diagnosis_head_payload["projector_output_dim"])
+    anchor_projector_output_dim = metadata.get("projector_output_dim")
+    if (
+        anchor_projector_output_dim is None
+        or int(anchor_projector_output_dim) != expected_projector_output_dim
+    ):
+        raise ValueError("Anchors projector_output_dim does not match the diagnosis head")
+
+    features = anchors_payload.get("features")
+    if not isinstance(features, dict) or not features:
+        raise ValueError("Anchors payload is missing tier features")
+    for tier, anchor_features in features.items():
+        if not torch.is_tensor(anchor_features):
+            raise ValueError(f"Anchor tier '{tier}' must be stored as a tensor")
+        if anchor_features.ndim != 2 or anchor_features.shape[1] != expected_projector_output_dim:
+            raise ValueError(
+                f"Anchor tier '{tier}' feature shape must be [N, {expected_projector_output_dim}]"
+            )
 
 
 def copytree_into_bundle(source_dir: str | Path, bundle_dir: str | Path, *, destination_name: str) -> str:

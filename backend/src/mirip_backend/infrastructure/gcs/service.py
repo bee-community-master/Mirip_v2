@@ -89,6 +89,21 @@ class GCSStorageService:
         except Exception as exc:
             raise DependencyError("GCS object lookup failed") from exc
 
+    async def download_bytes(self, *, object_name: str) -> bytes:
+        if self.backend == "fake" or self.settings.bucket_name is None:
+            raise DependencyError("GCS download is unavailable when storage backend is fake")
+
+        def _download_bytes() -> bytes:
+            client = self._client()
+            bucket = client.bucket(self.settings.bucket_name)
+            blob = bucket.blob(object_name)
+            return bytes(blob.download_as_bytes())
+
+        try:
+            return await asyncio.to_thread(_download_bytes)
+        except Exception as exc:
+            raise DependencyError(f"GCS object download failed for {object_name}") from exc
+
     async def download_tree(self, *, gcs_uri: str, destination_dir: str | Path) -> list[Path]:
         if not gcs_uri.startswith("gs://"):
             raise ValueError(f"Unsupported GCS URI: {gcs_uri}")

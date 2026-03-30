@@ -68,6 +68,7 @@ async def test_create_diagnosis_job_stores_queued_job() -> None:
 
     assert job.status == JobStatus.QUEUED
     assert job.user_id == "user-123"
+    assert job.metadata["input_object_names"] == [upload.object_name]
 
 
 async def test_create_diagnosis_job_rejects_foreign_upload() -> None:
@@ -125,6 +126,7 @@ async def test_create_diagnosis_job_records_vm_launch_metadata() -> None:
     assert job.metadata["launch_state"] == "launched"
     assert job.metadata["model_bundle_uri"] == "gs://mirip-v2-assets/models/vitl-cpu-bundle"
     assert job.metadata["target_job_id"] == job.id
+    assert job.metadata["input_object_names"] == [upload.object_name]
 
 
 async def test_create_diagnosis_job_fails_fast_when_cpu_onnx_launcher_is_missing() -> None:

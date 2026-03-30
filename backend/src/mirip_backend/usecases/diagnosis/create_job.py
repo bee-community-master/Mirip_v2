@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from mirip_backend.domain.auth.models import AuthenticatedUser
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 from mirip_backend.domain.diagnosis.repositories import DiagnosisJobRepository
+from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.infrastructure.compute.service import DiagnosisVmLauncher
 from mirip_backend.shared.clock import utc_now
@@ -53,8 +54,10 @@ class CreateDiagnosisJobUseCase:
         command: CreateDiagnosisJobCommand,
     ) -> DiagnosisJob:
         self._validate_command(command)
-        await self._ensure_uploads_ready(actor=actor, upload_ids=command.upload_ids)
-        created = await self._job_repository.create(self._build_job(actor=actor, command=command))
+        uploads = await self._ensure_uploads_ready(actor=actor, upload_ids=command.upload_ids)
+        created = await self._job_repository.create(
+            self._build_job(actor=actor, command=command, uploads=uploads)
+        )
         return await self._launch_worker_vm(created)
 
     def _validate_command(self, command: CreateDiagnosisJobCommand) -> None:
@@ -68,7 +71,8 @@ class CreateDiagnosisJobUseCase:
         *,
         actor: AuthenticatedUser,
         upload_ids: list[str],
-    ) -> None:
+    ) -> list[UploadAsset]:
+        uploads: list[UploadAsset] = []
         for upload_id in upload_ids:
             upload = await load_owned_upload(
                 upload_repository=self._upload_repository,
@@ -77,12 +81,15 @@ class CreateDiagnosisJobUseCase:
                 not_found_message=f"Upload {upload_id} does not exist",
             )
             require_uploaded_asset(upload, message="Diagnosis jobs require uploaded assets")
+            uploads.append(upload)
+        return uploads
 
     def _build_job(
         self,
         *,
         actor: AuthenticatedUser,
         command: CreateDiagnosisJobCommand,
+        uploads: list[UploadAsset],
     ) -> DiagnosisJob:
         now = utc_now()
         return DiagnosisJob(
@@ -97,7 +104,10 @@ class CreateDiagnosisJobUseCase:
             status=JobStatus.QUEUED,
             created_at=now,
             updated_at=now,
-            metadata={"requested_upload_count": str(len(command.upload_ids))},
+            metadata={
+                "requested_upload_count": str(len(command.upload_ids)),
+                "input_object_names": [upload.object_name for upload in uploads],
+            },
         )
 
     async def _launch_worker_vm(self, job: DiagnosisJob) -> DiagnosisJob:

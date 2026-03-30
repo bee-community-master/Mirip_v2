@@ -110,6 +110,7 @@ def run_postprocess_for_checkpoint(
         metadata_csv=metadata_train,
         image_root=image_root,
         model_name=model_name,
+        source_checkpoint=checkpoint_path,
     )
     anchors_output_path = anchors.save(anchors_output)
     loader = _build_evaluation_loader(
