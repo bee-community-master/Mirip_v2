@@ -14,6 +14,7 @@ from PIL import Image
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 from mirip_backend.shared.enums import JobStatus
+from mirip_backend.worker.inference.diagnosis_runtime import ImagePreprocessor
 from mirip_backend.worker.inference.service import (
     NonRetryableInferenceError,
     WorkerInferenceService,
@@ -38,6 +39,14 @@ class StubStorageService:
 
 def _make_image_bytes() -> bytes:
     image = Image.new("RGB", (16, 16), color=(128, 96, 64))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _make_gradient_image_bytes(*, width: int, height: int) -> bytes:
+    values = np.tile(np.arange(width, dtype=np.uint8), (height, 1))
+    image = Image.fromarray(values, mode="L").convert("RGB")
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -208,3 +217,32 @@ async def test_cpu_onnx_worker_rejects_compare_jobs(monkeypatch: pytest.MonkeyPa
                 ],
             )
         )
+
+
+def test_image_preprocessor_respects_shortest_edge_resize_and_center_crop(tmp_path: Path) -> None:
+    config_path = tmp_path / "preprocessor.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "do_resize": True,
+                "size": {"shortest_edge": 8},
+                "do_center_crop": True,
+                "crop_size": {"height": 8, "width": 8},
+                "do_rescale": False,
+                "do_normalize": False,
+                "resample": Image.Resampling.BICUBIC.value,
+            }
+        ),
+        encoding="utf-8",
+    )
+    preprocessor = ImagePreprocessor.load(config_path)
+    image_bytes = _make_gradient_image_bytes(width=12, height=6)
+
+    pixel_values = preprocessor.preprocess_bytes(image_bytes)
+
+    source_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    expected_image = source_image.resize((16, 8), resample=Image.Resampling.BICUBIC).crop(
+        (4, 0, 12, 8)
+    )
+    expected = np.transpose(np.asarray(expected_image, dtype=np.float32), (2, 0, 1))[None, ...]
+    assert np.allclose(pixel_values, expected)
