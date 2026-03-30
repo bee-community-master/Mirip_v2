@@ -307,18 +307,9 @@ def pull_artifacts(config_path: str, instance_id: int) -> int:
     config_absolute = str(_resolve_repo_path(config_path))
     workspace_cfg = get_workspace_config(config_absolute)
     remote_root = workspace_cfg.get("remote_root", "/workspace/mirip_v2")
-    privkey_path = normalize_path(os.getenv("VAST_SSH_PRIVKEY_PATH"))
-
-    ssh_cmd = f"ssh -p {port} -o StrictHostKeyChecking=no"
-    rsync_prefix = [
-        "rsync",
-        "-az",
-        "-e",
-        ssh_cmd if not privkey_path else f"{ssh_cmd} -i {shlex.quote(str(privkey_path))}",
-    ]
+    rsync_prefix = build_rsync_prefix(port)
     artifact_dirs = (
         (TRAIN_CHECKPOINTS_DIR, ROOT / CHECKPOINTS_REL_DIR),
-        (f"{TRAIN_ROOT}/{LEGACY_CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}", ROOT / CHECKPOINTS_REL_DIR / TRAIN_MODEL_SLUG),
         (TRAIN_REPORTS_DIR, ROOT / REPORTS_REL_DIR),
         (TRAIN_ANCHORS_DIR, ROOT / ANCHORS_REL_DIR),
     )
@@ -331,6 +322,73 @@ def pull_artifacts(config_path: str, instance_id: int) -> int:
         result = run_local_command(cmd)
         if result != 0:
             return result
+    return 0
+
+
+def build_rsync_prefix(port: int, *extra_args: str) -> list[str]:
+    privkey_path = normalize_path(os.getenv("VAST_SSH_PRIVKEY_PATH"))
+    ssh_cmd = f"ssh -p {port} -o StrictHostKeyChecking=no"
+    prefix = [
+        "rsync",
+        "-az",
+        "-e",
+        ssh_cmd if not privkey_path else f"{ssh_cmd} -i {shlex.quote(str(privkey_path))}",
+    ]
+    prefix.extend(extra_args)
+    return prefix
+
+
+def checkpoint_local_path(checkpoint_relative: str) -> Path:
+    checkpoint_path = Path(checkpoint_relative)
+    parts = checkpoint_path.parts
+    if parts[:2] == (OUTPUT_MODELS_REL_DIR, "checkpoints"):
+        suffix = Path(*parts[2:])
+    elif parts[:1] == (LEGACY_CHECKPOINTS_REL_DIR,):
+        suffix = Path(*parts[1:])
+    else:
+        raise SystemExit(f"Unsupported checkpoint path in registry: {checkpoint_relative}")
+    return ROOT / CHECKPOINTS_REL_DIR / suffix
+
+
+def pull_sync_prune_artifacts(
+    *,
+    host: str,
+    port: int,
+    remote_root: str,
+    retained_checkpoints: list[str] | None = None,
+    selected_checkpoint: str | None = None,
+) -> int:
+    rsync_prefix = build_rsync_prefix(port)
+    artifact_dirs = (
+        (TRAIN_REPORTS_DIR, ROOT / REPORTS_REL_DIR),
+        (TRAIN_ANCHORS_DIR, ROOT / ANCHORS_REL_DIR),
+    )
+    for remote_dir, local_dir in artifact_dirs:
+        local_dir.mkdir(parents=True, exist_ok=True)
+        cmd = list(rsync_prefix)
+        cmd.extend([f"root@{host}:{remote_root}/{remote_dir}/", str(local_dir)])
+        result = run_local_command(cmd)
+        if result != 0:
+            return result
+
+    if retained_checkpoints:
+        for checkpoint_relative in retained_checkpoints:
+            local_path = checkpoint_local_path(checkpoint_relative)
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+            cmd = build_rsync_prefix(port, "--partial", "--size-only")
+            remote_path = f"root@{host}:{remote_root}/{TRAIN_ROOT}/{checkpoint_relative}"
+            cmd.extend([remote_path, str(local_path)])
+            result = run_local_command(cmd)
+            if result != 0:
+                return result
+
+    if selected_checkpoint:
+        selected_local_path = checkpoint_local_path(selected_checkpoint)
+        best_link = selected_local_path.parent / "best_model.pt"
+        if selected_local_path.exists() and selected_local_path.name != best_link.name:
+            best_link.unlink(missing_ok=True)
+            best_link.symlink_to(selected_local_path.name)
+
     return 0
 
 
@@ -406,7 +464,13 @@ def execute_remote_command_over_ssh(client: VastClient, instance_id: int, remote
 
 def sync_prune(config_path: str, instance_id: int) -> int:
     config_absolute = str(_resolve_repo_path(config_path))
-    pull_result = pull_artifacts(config_absolute, instance_id)
+    api_key = require_env("VAST_API_KEY")
+    client = VastClient(api_key)
+    host, port = get_connection_info(client, instance_id)
+    config = load_toml(config_absolute)
+    remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
+
+    pull_result = pull_sync_prune_artifacts(host=host, port=port, remote_root=remote_root)
     if pull_result != 0:
         return pull_result
 
@@ -421,16 +485,22 @@ def sync_prune(config_path: str, instance_id: int) -> int:
     selected_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
     current_candidate_checkpoint = registry.get("current_candidate_checkpoint")
 
-    config = load_toml(config_absolute)
-    remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
+    pull_result = pull_sync_prune_artifacts(
+        host=host,
+        port=port,
+        remote_root=remote_root,
+        retained_checkpoints=[selected_checkpoint],
+        selected_checkpoint=selected_checkpoint,
+    )
+    if pull_result != 0:
+        return pull_result
+
     command = build_remote_prune_command(
         remote_root,
         selected_checkpoint,
         retained_checkpoints,
         str(current_candidate_checkpoint) if current_candidate_checkpoint else None,
     )
-    api_key = require_env("VAST_API_KEY")
-    client = VastClient(api_key)
     return execute_remote_command_over_ssh(client, instance_id, command)
 
 

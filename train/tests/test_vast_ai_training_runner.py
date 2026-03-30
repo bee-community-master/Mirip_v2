@@ -90,14 +90,11 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
             ]
         )
 
-    def test_pull_artifacts_downloads_legacy_checkpoint_root_into_output_models(self) -> None:
+    def test_pull_sync_prune_artifacts_downloads_retained_legacy_checkpoint_into_output_models(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo_root = Path(temp_dir) / "repo"
             train_root = repo_root / "train"
             train_root.mkdir(parents=True, exist_ok=True)
-            config_path = repo_root / "config.toml"
-            config_path.write_text("", encoding="utf-8")
-
             recorded_commands: list[list[str]] = []
 
             def _record_command(cmd: list[str], cwd: Path | None = None) -> int:
@@ -106,24 +103,28 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
             with (
                 mock.patch.object(vast_ai_training_runner, "ROOT", train_root),
-                mock.patch.object(vast_ai_training_runner, "require_env", return_value="vast-api-key"),
-                mock.patch.object(vast_ai_training_runner, "get_connection_info", return_value=("ssh1.vast.ai", 31416)),
-                mock.patch.object(vast_ai_training_runner, "get_workspace_config", return_value={"remote_root": "/workspace/mirip_v2"}),
                 mock.patch.object(vast_ai_training_runner, "run_local_command", side_effect=_record_command),
-                mock.patch.object(vast_ai_training_runner, "VastClient"),
                 mock.patch.dict(os.environ, {"VAST_SSH_PRIVKEY_PATH": "/tmp/vast_key"}, clear=False),
             ):
-                result = vast_ai_training_runner.pull_artifacts(str(config_path), 33831416)
+                result = vast_ai_training_runner.pull_sync_prune_artifacts(
+                    host="ssh1.vast.ai",
+                    port=31416,
+                    remote_root="/workspace/mirip_v2",
+                    retained_checkpoints=["checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt"],
+                    selected_checkpoint="checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+                )
 
         self.assertEqual(result, 0)
-        self.assertEqual(len(recorded_commands), 4)
+        self.assertEqual(len(recorded_commands), 3)
+        self.assertIn("--partial", recorded_commands[2])
+        self.assertIn("--size-only", recorded_commands[2])
         self.assertIn(
-            "root@ssh1.vast.ai:/workspace/mirip_v2/train/checkpoints/dinov3_vit7b16/",
-            recorded_commands[1],
+            "root@ssh1.vast.ai:/workspace/mirip_v2/train/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+            recorded_commands[2],
         )
         self.assertIn(
-            str(train_root / "output_models" / "checkpoints" / "dinov3_vit7b16"),
-            recorded_commands[1],
+            str(train_root / "output_models" / "checkpoints" / "dinov3_vit7b16" / "full" / "checkpoint_epoch_0002.pt"),
+            recorded_commands[2],
         )
 
     def test_load_postprocess_registry_requires_selected_best_checkpoint(self) -> None:
@@ -164,6 +165,53 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
             )
 
             self.assertTrue(stale)
+
+    def test_sync_prune_downloads_only_selected_best_checkpoint_locally(self) -> None:
+        registry = {
+            "selected_best_checkpoint_after_compare": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+            "current_candidate_checkpoint": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+            "retained_checkpoints": [
+                "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+            ],
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.toml"
+            config_path.write_text("", encoding="utf-8")
+            fake_client = object()
+            with (
+                mock.patch.object(vast_ai_training_runner, "require_env", return_value="vast-api-key"),
+                mock.patch.object(vast_ai_training_runner, "VastClient", return_value=fake_client),
+                mock.patch.object(vast_ai_training_runner, "get_connection_info", return_value=("ssh1.vast.ai", 31416)),
+                mock.patch.object(vast_ai_training_runner, "load_toml", return_value={"workspace": {"remote_root": "/workspace/mirip_v2"}}),
+                mock.patch.object(vast_ai_training_runner, "load_postprocess_registry", return_value=registry),
+                mock.patch.object(vast_ai_training_runner, "registry_is_stale_for_local_checkpoints", return_value=False),
+                mock.patch.object(vast_ai_training_runner, "build_remote_prune_command", return_value="bash -lc 'echo ok'") as build_remote_prune_command,
+                mock.patch.object(vast_ai_training_runner, "execute_remote_command_over_ssh", return_value=0) as execute_remote_command_over_ssh,
+                mock.patch.object(vast_ai_training_runner, "pull_sync_prune_artifacts", side_effect=[0, 0]) as pull_sync_prune_artifacts,
+            ):
+                result = vast_ai_training_runner.sync_prune(str(config_path), 33831416)
+
+        self.assertEqual(result, 0)
+        self.assertEqual(pull_sync_prune_artifacts.call_count, 2)
+        first_call = pull_sync_prune_artifacts.call_args_list[0]
+        second_call = pull_sync_prune_artifacts.call_args_list[1]
+        self.assertEqual(first_call.kwargs["host"], "ssh1.vast.ai")
+        self.assertIsNone(first_call.kwargs.get("retained_checkpoints"))
+        self.assertEqual(
+            second_call.kwargs["retained_checkpoints"],
+            ["checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt"],
+        )
+        build_remote_prune_command.assert_called_once_with(
+            "/workspace/mirip_v2",
+            "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+            [
+                "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+            ],
+            "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
+        )
+        execute_remote_command_over_ssh.assert_called_once_with(fake_client, 33831416, "bash -lc 'echo ok'")
 
     def test_full_stage_command_runs_postprocess_selection_before_final_eval(self) -> None:
         command = vast_ai_training_runner.build_stage_command("full", "/workspace/mirip_v2")
