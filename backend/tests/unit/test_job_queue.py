@@ -72,3 +72,36 @@ async def test_queue_marks_failed_after_max_attempts() -> None:
     assert failed.status == JobStatus.FAILED
     assert failed.failure_reason == "boom"
     assert failed.lease_owner is None
+
+
+async def test_queue_heartbeat_extends_lease_without_changing_status() -> None:
+    repository = DocumentDiagnosisJobRepository(MemoryDocumentStore())
+    now = utc_now()
+    job = DiagnosisJob(
+        id="job-3",
+        user_id="user-1",
+        upload_ids=["upl-1"],
+        job_type="evaluate",
+        department="visual_design",
+        include_feedback=True,
+        theme=None,
+        language="ko",
+        status=JobStatus.RUNNING,
+        created_at=now,
+        updated_at=now,
+        attempts=1,
+        lease_owner="worker-a",
+        lease_expires_at=now,
+    )
+    await repository.create(job)
+
+    queue = JobQueueService(
+        JobSettings(lease_seconds=60, heartbeat_interval_seconds=10, max_attempts=3),
+        repository,
+    )
+    heartbeated = await queue.heartbeat(job)
+
+    assert heartbeated.status == JobStatus.RUNNING
+    assert heartbeated.lease_owner == "worker-a"
+    assert heartbeated.lease_expires_at is not None
+    assert heartbeated.lease_expires_at > now

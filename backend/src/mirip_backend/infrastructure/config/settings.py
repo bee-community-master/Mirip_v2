@@ -32,6 +32,7 @@ class GCSSettings(BaseModel):
 
 class JobSettings(BaseModel):
     lease_seconds: int = 300
+    heartbeat_interval_seconds: int = 30
     max_attempts: int = 5
     worker_poll_interval_seconds: int = 5
 

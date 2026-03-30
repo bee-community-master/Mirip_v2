@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import Lock
 
 from mirip_backend.domain.auth.models import AuthenticatedUser
 from mirip_backend.domain.common.models import HealthDependency
@@ -15,29 +16,31 @@ from mirip_backend.shared.exceptions import AuthenticationError, DependencyError
 class FirebaseAuthService:
     settings: FirebaseSettings
     _initialized: bool = False
+    _init_lock: Lock = field(default_factory=Lock)
 
     def _initialize(self) -> None:
-        if self._initialized:
-            return
-        if not self.settings.project_id and not self.settings.credentials_path:
-            return
+        with self._init_lock:
+            if self._initialized:
+                return
+            if not self.settings.project_id and not self.settings.credentials_path:
+                return
 
-        import firebase_admin
-        from firebase_admin import credentials
+            import firebase_admin
+            from firebase_admin import credentials
 
-        try:
-            firebase_admin.get_app()
+            try:
+                firebase_admin.get_app()
+                self._initialized = True
+                return
+            except ValueError:
+                pass
+
+            if self.settings.credentials_path:
+                credential = credentials.Certificate(self.settings.credentials_path)
+                firebase_admin.initialize_app(credential, {"projectId": self.settings.project_id})
+            else:
+                firebase_admin.initialize_app(options={"projectId": self.settings.project_id})
             self._initialized = True
-            return
-        except ValueError:
-            pass
-
-        if self.settings.credentials_path:
-            credential = credentials.Certificate(self.settings.credentials_path)
-            firebase_admin.initialize_app(credential, {"projectId": self.settings.project_id})
-        else:
-            firebase_admin.initialize_app(options={"projectId": self.settings.project_id})
-        self._initialized = True
 
     async def authenticate(self, authorization: str | None) -> AuthenticatedUser:
         if authorization is None or not authorization.startswith("Bearer "):

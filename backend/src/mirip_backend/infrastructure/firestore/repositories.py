@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from mirip_backend.domain.common.models import Page
 from mirip_backend.domain.competitions.entities import Competition, CompetitionSubmission
@@ -12,7 +13,7 @@ from mirip_backend.domain.credentials.entities import Credential
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob, DiagnosisResult
 from mirip_backend.domain.profiles.entities import PortfolioItem, Profile
 from mirip_backend.domain.uploads.entities import UploadAsset
-from mirip_backend.infrastructure.firestore.client import DocumentStore
+from mirip_backend.infrastructure.firestore.client import DocumentStore, FirestoreDocumentStore
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.enums import CredentialStatus, JobStatus, UploadStatus, Visibility
 
@@ -92,6 +93,9 @@ class DocumentDiagnosisJobRepository:
         doc = await self._store.get(self.COLLECTION, job_id)
         if doc is None:
             return None
+        return self._to_entity(doc)
+
+    def _to_entity(self, doc: dict[str, Any]) -> DiagnosisJob:
         return DiagnosisJob(
             id=str(doc["id"]),
             user_id=str(doc["user_id"]),
@@ -133,6 +137,13 @@ class DocumentDiagnosisJobRepository:
         worker_id: str,
         lease_until: datetime,
     ) -> DiagnosisJob | None:
+        if isinstance(self._store, FirestoreDocumentStore):
+            return await asyncio.to_thread(
+                self._lease_next_ready_job_firestore,
+                worker_id,
+                lease_until,
+            )
+
         docs = await self._store.query(self.COLLECTION, order_by="created_at", descending=False)
         now = utc_now()
         for doc in docs:
@@ -157,6 +168,47 @@ class DocumentDiagnosisJobRepository:
             await self.update(leased)
             return leased
         return None
+
+    def _lease_next_ready_job_firestore(
+        self,
+        worker_id: str,
+        lease_until: datetime,
+    ) -> DiagnosisJob | None:
+        from google.cloud import firestore
+
+        store = cast(FirestoreDocumentStore, self._store)
+        client = store._client()
+        transaction = client.transaction()
+        now = utc_now()
+
+        @firestore.transactional
+        def _claim(tx: Any) -> DiagnosisJob | None:
+            query = client.collection(self.COLLECTION).order_by("created_at")
+            for snapshot in query.stream(transaction=tx):
+                doc = snapshot.to_dict()
+                if doc is None:
+                    continue
+                job = self._to_entity(doc)
+                lease_expired = job.lease_expires_at is not None and job.lease_expires_at <= now
+                if job.status not in {JobStatus.QUEUED, JobStatus.EXPIRED} and not (
+                    job.status in {JobStatus.LEASED, JobStatus.RUNNING} and lease_expired
+                ):
+                    continue
+                leased = DiagnosisJob(
+                    **{
+                        **asdict(job),
+                        "status": JobStatus.LEASED,
+                        "lease_owner": worker_id,
+                        "lease_expires_at": lease_until,
+                        "attempts": job.attempts + 1,
+                        "updated_at": lease_until,
+                    }
+                )
+                tx.update(snapshot.reference, _serialize(asdict(leased)))
+                return leased
+            return None
+
+        return cast(DiagnosisJob | None, _claim(transaction))
 
 
 class DocumentDiagnosisResultRepository:
