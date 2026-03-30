@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from training.config import DinoV3TrainingConfig
+from training.config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig
 from training.datasets import DinoPairDataset
 from training.models import DinoV3PairwiseModel
 from training.trainer import DinoV3Trainer
@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pairs-val", required=True)
     parser.add_argument("--image-root", required=True)
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--model-name", default="facebook/dinov3-vitl16-pretrain-lvd1689m")
+    parser.add_argument("--model-name", default=DEFAULT_DINOV3_MODEL_NAME)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)

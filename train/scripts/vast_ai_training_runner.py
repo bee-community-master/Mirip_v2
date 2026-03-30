@@ -48,7 +48,7 @@ def _bootstrap_parts(remote_root: str) -> list[str]:
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        "python3 -m venv .venv",
+        "python3 -m venv --system-site-packages .venv",
         ". .venv/bin/activate",
         "python -m pip install --upgrade pip",
         f"python -m pip install -r {TRAINING_DIR}/requirements.txt",

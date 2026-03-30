@@ -6,10 +6,12 @@ from typing import Any
 
 from .utils import resolve_project_path
 
+DEFAULT_DINOV3_MODEL_NAME = "camenduru/dinov3-vitl16-pretrain-lvd1689m"
+
 
 @dataclass
 class DinoV3TrainingConfig:
-    model_name: str = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+    model_name: str = DEFAULT_DINOV3_MODEL_NAME
     learning_rate: float = 1e-4
     weight_decay: float = 0.05
     batch_size: int = 8

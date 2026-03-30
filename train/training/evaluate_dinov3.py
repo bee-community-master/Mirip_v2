@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from training.anchors import AnchorStore, evaluate_anchor_tier_accuracy
-from training.config import DinoV3TrainingConfig
+from training.config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig
 from training.datasets import DinoPairDataset
 from training.evaluation import evaluate_pairwise
 from training.models import DinoV3PairwiseModel
@@ -45,7 +45,7 @@ def main() -> int:
     checkpoint = torch.load(checkpoint_path, map_location=map_location)
     config_dict = checkpoint.get("config", DinoV3TrainingConfig().to_dict())
     model = DinoV3PairwiseModel(
-        model_name=config_dict.get("model_name", "facebook/dinov3-vitl16-pretrain-lvd1689m"),
+        model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
         projector_hidden_dim=int(config_dict.get("projector_hidden_dim", 512)),
         projector_output_dim=int(config_dict.get("projector_output_dim", 256)),
         dropout=float(config_dict.get("dropout", 0.3)),
@@ -57,7 +57,7 @@ def main() -> int:
     dataset = DinoPairDataset(
         pairs_csv=args.pairs_val,
         image_root=args.image_root,
-        model_name=config_dict.get("model_name", "facebook/dinov3-vitl16-pretrain-lvd1689m"),
+        model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
     )
     loader = DataLoader(
         dataset,
@@ -77,7 +77,7 @@ def main() -> int:
                 anchors=anchors,
                 metadata_csv=args.metadata_eval,
                 image_root=args.image_root,
-                model_name=config_dict.get("model_name", "facebook/dinov3-vitl16-pretrain-lvd1689m"),
+                model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
                 precision=args.precision,
             )
         )
