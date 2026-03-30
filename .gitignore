@@ -36,3 +36,17 @@ backend/dist
 backend/build
 backend/__pycache__
 backend/**/*.pyc
+
+# Training
+__pycache__/
+*.pyc
+*.pyo
+
+logs/
+anchors/
+checkpoints/
+reports/
+
+training/data/*.csv
+training/data/*.json
+!training/data/README.md
