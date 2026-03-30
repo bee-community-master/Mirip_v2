@@ -65,7 +65,10 @@
 			본문으로 건너뛰기
 		</a>
 		<div class="section-frame flex h-16 items-center justify-between gap-4">
-			<a href="/" class="font-display text-2xl font-black tracking-[-0.08em] text-gradient">
+			<a
+				href="/"
+				class="font-display rounded-full text-2xl font-black tracking-[-0.08em] text-gradient focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
+			>
 				MIRIP.
 			</a>
 
@@ -73,7 +76,8 @@
 				{#each navItems as item}
 					<a
 						href={item.path}
-						class={`relative rounded-full px-4 py-2 text-sm font-semibold transition ${isActive(item.path) ? 'text-white' : 'text-white/52 hover:text-white'}`}
+						class={`relative rounded-full px-4 py-2 text-sm font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300 ${isActive(item.path) ? 'text-white' : 'text-white/52 hover:text-white'}`}
+						aria-current={isActive(item.path) ? 'page' : undefined}
 					>
 						{#if isActive(item.path)}
 							<span class="absolute inset-0 rounded-full bg-white/10"></span>
@@ -105,6 +109,7 @@
 					}}
 					aria-label={mobileOpen ? '메뉴 닫기' : '메뉴 열기'}
 					aria-expanded={mobileOpen}
+					aria-controls="mobile-navigation"
 				>
 					{#if mobileOpen}
 						<X class="size-5" aria-hidden="true" />
@@ -116,12 +121,16 @@
 		</div>
 
 		{#if mobileOpen}
-			<div class="border-t border-white/8 bg-night-950/92 px-4 py-4 backdrop-blur-xl md:hidden">
+			<div
+				id="mobile-navigation"
+				class="border-t border-white/8 bg-night-950/92 px-4 py-4 backdrop-blur-xl md:hidden"
+			>
 				<div class="flex flex-col gap-2">
 					{#each navItems as item}
 						<a
 							href={item.path}
 							class={`rounded-2xl px-4 py-3 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300 ${isActive(item.path) ? 'bg-white text-black' : 'bg-white/5 text-white/70'}`}
+							aria-current={isActive(item.path) ? 'page' : undefined}
 							onclick={closeMobileMenu}
 						>
 							<span class="flex items-center gap-2">
