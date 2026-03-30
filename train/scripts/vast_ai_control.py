@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 API_BASE = "https://console.vast.ai/api/v0"
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class VastApiError(RuntimeError):
