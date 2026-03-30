@@ -44,6 +44,7 @@ def main() -> int:
         dropout=float(config_dict.get("dropout", 0.3)),
         margin=float(config_dict.get("margin", 0.3)),
         freeze_backbone=True,
+        backbone_dtype=str(config_dict.get("backbone_dtype", "auto")),
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(map_location)

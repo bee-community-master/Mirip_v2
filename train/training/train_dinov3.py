@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-root", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default=DEFAULT_DINOV3_MODEL_NAME)
+    parser.add_argument("--backbone-dtype", default="auto", choices=["auto", "bf16", "fp16", "fp32"])
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
@@ -56,6 +57,7 @@ def main() -> int:
 
     config = DinoV3TrainingConfig(
         model_name=args.model_name,
+        backbone_dtype=args.backbone_dtype,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         batch_size=args.batch_size,
@@ -114,6 +116,7 @@ def main() -> int:
         dropout=config.dropout,
         margin=config.margin,
         freeze_backbone=True,
+        backbone_dtype=config.backbone_dtype,
     )
     trainer = DinoV3Trainer(model=model, config=config, resume_from=args.resume_from)
     summary = trainer.train(train_loader, val_loader)

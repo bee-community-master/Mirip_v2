@@ -6,13 +6,40 @@ import torch.nn.functional as F
 from transformers import AutoModel
 
 
+def resolve_backbone_dtype(backbone_dtype: str) -> torch.dtype | None:
+    if backbone_dtype == "bf16":
+        return torch.bfloat16
+    if backbone_dtype == "fp16":
+        return torch.float16
+    if backbone_dtype == "fp32":
+        return torch.float32
+    if not torch.cuda.is_available():
+        return None
+    if torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
 class DinoV3FeatureExtractor(nn.Module):
-    def __init__(self, model_name: str, normalize: bool = True, freeze_backbone: bool = True) -> None:
+    def __init__(
+        self,
+        model_name: str,
+        normalize: bool = True,
+        freeze_backbone: bool = True,
+        backbone_dtype: str = "auto",
+    ) -> None:
         super().__init__()
         self.model_name = model_name
         self.normalize = normalize
         self.freeze_backbone = freeze_backbone
-        self.model = AutoModel.from_pretrained(model_name)
+        self.backbone_dtype = backbone_dtype
+        resolved_dtype = resolve_backbone_dtype(backbone_dtype)
+        model_kwargs: dict[str, object] = {
+            "low_cpu_mem_usage": True,
+        }
+        if resolved_dtype is not None:
+            model_kwargs["torch_dtype"] = resolved_dtype
+        self.model = AutoModel.from_pretrained(model_name, **model_kwargs)
         self.output_dim = int(self.model.config.hidden_size)
         if freeze_backbone:
             for param in self.model.parameters():
@@ -45,6 +72,7 @@ class DinoV3PairwiseModel(nn.Module):
         dropout: float = 0.3,
         margin: float = 0.3,
         freeze_backbone: bool = True,
+        backbone_dtype: str = "auto",
     ) -> None:
         super().__init__()
         self.model_name = model_name
@@ -53,6 +81,7 @@ class DinoV3PairwiseModel(nn.Module):
             model_name=model_name,
             normalize=True,
             freeze_backbone=freeze_backbone,
+            backbone_dtype=backbone_dtype,
         )
         feature_dim = self.feature_extractor.output_dim
         self.projector = nn.Sequential(

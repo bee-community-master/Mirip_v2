@@ -7,7 +7,7 @@ from typing import Any
 
 from .utils import resolve_project_path
 
-DEFAULT_DINOV3_MODEL_NAME = "camenduru/dinov3-vitl16-pretrain-lvd1689m"
+DEFAULT_DINOV3_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
 
 
 def default_num_workers() -> int:
@@ -18,6 +18,7 @@ def default_num_workers() -> int:
 @dataclass
 class DinoV3TrainingConfig:
     model_name: str = DEFAULT_DINOV3_MODEL_NAME
+    backbone_dtype: str = "auto"
     learning_rate: float = 1e-4
     weight_decay: float = 0.05
     batch_size: int = 8
@@ -61,6 +62,8 @@ class DinoV3TrainingConfig:
             raise ValueError("num_workers must be non-negative")
         if self.prefetch_factor <= 0:
             raise ValueError("prefetch_factor must be positive")
+        if self.backbone_dtype not in {"auto", "bf16", "fp16", "fp32"}:
+            raise ValueError("backbone_dtype must be one of: auto, bf16, fp16, fp32")
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

@@ -23,10 +23,12 @@ TRAIN_CONFIG_PATH = f"{TRAIN_ROOT}/configs/vast_rtx_pro_4500_blackwell_32gb_onde
 TRAIN_REPORTS_DIR = f"{TRAIN_ROOT}/reports"
 TRAIN_CHECKPOINTS_DIR = f"{TRAIN_ROOT}/checkpoints"
 TRAIN_ANCHORS_DIR = f"{TRAIN_ROOT}/anchors"
-TRAIN_BATCH_SIZE = 64
-TRAIN_GRADIENT_ACCUMULATION_STEPS = 1
-TRAIN_NUM_WORKERS = 10
-TRAIN_PREFETCH_FACTOR = 6
+TRAIN_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
+TRAIN_MODEL_SLUG = "dinov3_vit7b16"
+TRAIN_BATCH_SIZE = 16
+TRAIN_GRADIENT_ACCUMULATION_STEPS = 4
+TRAIN_NUM_WORKERS = 8
+TRAIN_PREFETCH_FACTOR = 4
 
 from vast_ai_control import (  # noqa: E402
     VastClient,
@@ -60,6 +62,7 @@ def _bootstrap_parts(remote_root: str) -> list[str]:
         + " ".join(
             [
                 f"{TRAIN_CHECKPOINTS_DIR}/dinov3_vitl16",
+                f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}",
                 TRAIN_REPORTS_DIR,
                 TRAIN_ANCHORS_DIR,
                 TRAINING_DATA_DIR,
@@ -89,30 +92,33 @@ def _build_validate_upload_command(remote_root: str) -> str:
 
 def _build_smoke_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
-    checkpoint_dir = "checkpoints/dinov3_vitl16/smoke"
+    checkpoint_dir = f"checkpoints/{TRAIN_MODEL_SLUG}/smoke"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
+    anchors_path = f"anchors/{TRAIN_MODEL_SLUG}_anchors.pt"
     return _bash_command(
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 1 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/dinov3_vitl16_smoke_train.json",
-            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output anchors/anchors.pt --report reports/dinov3_vitl16_smoke_anchors.json",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/dinov3_vitl16_smoke.json",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 1 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/{TRAIN_MODEL_SLUG}_smoke_train.json",
+            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output {anchors_path} --report reports/{TRAIN_MODEL_SLUG}_smoke_anchors.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors {anchors_path} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/{TRAIN_MODEL_SLUG}_smoke.json",
         ]
     )
 
 
 def _build_full_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
-    checkpoint_dir = "checkpoints/dinov3_vitl16/full"
+    checkpoint_dir = f"checkpoints/{TRAIN_MODEL_SLUG}/full"
     best_checkpoint = f"{checkpoint_dir}/best_model.pt"
+    smoke_checkpoint = f"checkpoints/{TRAIN_MODEL_SLUG}/smoke/best_model.pt"
+    anchors_path = f"anchors/{TRAIN_MODEL_SLUG}_anchors.pt"
     return _bash_command(
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --epochs 50 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/dinov3_vitl16_full_train.json",
-            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output anchors/anchors.pt --report reports/dinov3_vitl16_full_anchors.json",
-            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors anchors/anchors.pt --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/dinov3_vitl16_full.json",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --resume-from {smoke_checkpoint} --epochs 50 --batch-size {TRAIN_BATCH_SIZE} --gradient-accumulation-steps {TRAIN_GRADIENT_ACCUMULATION_STEPS} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --report reports/{TRAIN_MODEL_SLUG}_full_train.json",
+            f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint {best_checkpoint} --metadata training/data/metadata_train.csv --image-root data --output {anchors_path} --report reports/{TRAIN_MODEL_SLUG}_full_anchors.json",
+            f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint {best_checkpoint} --pairs-val training/data/pairs_val.csv --image-root data --anchors {anchors_path} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output reports/{TRAIN_MODEL_SLUG}_full.json",
         ]
     )
 
