@@ -60,6 +60,7 @@
 						badge="Profile"
 						title={portfolioProfile.name}
 						subtitle={portfolioProfile.role}
+						level="h1"
 					/>
 				</div>
 
@@ -101,7 +102,7 @@
 			{#each portfolioWorks as work}
 				<button
 					type="button"
-					class="group w-full"
+					class="group w-full rounded-[28px] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
 					onclick={() => {
 						openWork(work.id);
 					}}
@@ -146,6 +147,17 @@
 					</GlassCard>
 				</button>
 			{/each}
+
+			{#if !portfolioWorks.length}
+				<GlassCard className="rounded-[28px] p-8 text-center">
+					<h2 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">
+						아직 등록된 작업이 없습니다
+					</h2>
+					<p class="soft-text mt-3">
+						포트폴리오 mock 데이터가 비어 있어도 화면이 깨지지 않도록 빈 상태를 먼저 보여줍니다.
+					</p>
+				</GlassCard>
+			{/if}
 		</div>
 	</div>
 </section>

@@ -91,6 +91,7 @@
 				badge="Open Calls"
 				title="진행중인 공모전"
 				subtitle="필터를 바꾸면 현재 준비하는 작업 톤에 맞는 기회를 바로 좁혀서 볼 수 있습니다."
+				level="h1"
 			/>
 
 			<div class="flex flex-wrap gap-2">
@@ -123,7 +124,7 @@
 				<GlassCard className="overflow-hidden rounded-[30px]" hoverable={true}>
 					<button
 						type="button"
-						class="group h-full w-full text-left"
+						class="group h-full w-full rounded-[30px] text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fuchsia-300"
 						onclick={() => {
 							openCompetition(competition.id);
 						}}
@@ -177,6 +178,26 @@
 					</button>
 				</GlassCard>
 			{/each}
+
+			{#if !filteredCompetitions.length}
+				<GlassCard className="rounded-[30px] p-8 md:col-span-2 xl:col-span-3">
+					<h2 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">
+						조건에 맞는 공모전이 아직 없습니다
+					</h2>
+					<p class="soft-text mt-3">
+						다른 카테고리 필터를 선택하거나 전체 보기로 돌아가면 추천 기회를 다시 볼 수 있습니다.
+					</p>
+					<button
+						type="button"
+						class="mt-6 rounded-full bg-white px-5 py-3 font-semibold text-black transition-transform duration-200 hover:scale-[1.02] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+						onclick={() => {
+							selectFilter('전체');
+						}}
+					>
+						전체 공모전 보기
+					</button>
+				</GlassCard>
+			{/if}
 		</div>
 	</div>
 </section>

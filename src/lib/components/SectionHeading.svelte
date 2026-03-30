@@ -3,12 +3,14 @@
 		badge = '',
 		title,
 		subtitle,
-		center = false
+		center = false,
+		level = 'h2'
 	}: {
 		badge?: string;
 		title: string;
 		subtitle: string;
 		center?: boolean;
+		level?: 'h1' | 'h2' | 'h3';
 	} = $props();
 </script>
 
@@ -16,6 +18,6 @@
 	{#if badge}
 		<div class="story-kicker">{badge}</div>
 	{/if}
-	<h2 class="page-title max-w-3xl">{title}</h2>
+	<svelte:element this={level} class="page-title max-w-3xl">{title}</svelte:element>
 	<p class={`soft-text max-w-2xl ${center ? 'text-center' : ''}`}>{subtitle}</p>
 </div>

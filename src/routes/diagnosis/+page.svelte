@@ -153,6 +153,7 @@
 			title="작품을 업로드하고 대학별 합격 가능성을 확인하세요"
 			subtitle="실제 API 없이도 업로드, 분석 상태, 결과, 티어 전환, 대학/전문가 탭을 모두 로컬 상태와 fixture로 재현합니다."
 			center={true}
+			level="h1"
 		/>
 
 		{#if error}
