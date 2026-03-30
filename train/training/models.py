@@ -113,10 +113,21 @@ class DinoV3PairwiseModel(nn.Module):
     def extract_features(self, pixel_values: torch.Tensor) -> torch.Tensor:
         return self.feature_extractor(pixel_values)
 
+    @staticmethod
+    def _align_tensor_for_module(tensor: torch.Tensor, module: nn.Module) -> torch.Tensor:
+        parameter = next(module.parameters())
+        if tensor.device != parameter.device:
+            tensor = tensor.to(parameter.device)
+        if not torch.is_autocast_enabled() and tensor.dtype != parameter.dtype:
+            tensor = tensor.to(dtype=parameter.dtype)
+        return tensor
+
     def project_features(self, features: torch.Tensor) -> torch.Tensor:
+        features = self._align_tensor_for_module(features, self.projector)
         return self.projector(features)
 
     def score_features(self, projected_features: torch.Tensor) -> torch.Tensor:
+        projected_features = self._align_tensor_for_module(projected_features, self.score_head)
         return self.score_head(projected_features)
 
     def predict_score(self, pixel_values: torch.Tensor) -> torch.Tensor:
