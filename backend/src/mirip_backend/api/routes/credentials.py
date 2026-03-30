@@ -8,7 +8,7 @@ from mirip_backend.api.deps.auth import CurrentUserDep, OptionalCurrentUserDep
 from mirip_backend.api.deps.services import ContainerDep
 from mirip_backend.api.schemas.credentials import CredentialResponse, PublishCredentialRequest
 from mirip_backend.shared.enums import Visibility
-from mirip_backend.shared.exceptions import NotFoundError
+from mirip_backend.usecases.credentials.get_credential import GetCredentialUseCase
 from mirip_backend.usecases.credentials.publish_credential import (
     PublishCredentialCommand,
     PublishCredentialUseCase,
@@ -51,13 +51,9 @@ async def get_credential(
     current_user: OptionalCurrentUserDep,
     container: ContainerDep,
 ) -> CredentialResponse:
-    credential = await container.credential_repository.get(credential_id)
-    if credential is None:
-        raise NotFoundError("Credential not found")
-    if credential.visibility != Visibility.PUBLIC and (
-        current_user is None or credential.user_id != current_user.user_id
-    ):
-        raise NotFoundError("Credential not found")
+    usecase = GetCredentialUseCase(container.credential_repository)
+    view = await usecase.execute(actor=current_user, credential_id=credential_id)
+    credential = view.credential
     return CredentialResponse(
         id=credential.id,
         result_id=credential.result_id,

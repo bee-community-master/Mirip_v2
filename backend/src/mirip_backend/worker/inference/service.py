@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from typing import Protocol
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 
@@ -15,6 +16,10 @@ class InferenceOutput:
     probabilities: list[dict[str, object]]
     feedback: dict[str, object] | None
     summary: str | None
+
+
+class InferenceService(Protocol):
+    async def evaluate(self, job: DiagnosisJob) -> InferenceOutput: ...
 
 
 class GpuInferenceService:

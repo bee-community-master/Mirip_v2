@@ -33,11 +33,11 @@ uv lock
 
 Key settings are grouped around:
 
-- `api_*`
-- `firebase_*`
-- `gcs_*`
-- `job_*`
-- `worker_*`
-- `observability_*`
+- `MIRIP_API__*`
+- `MIRIP_FIREBASE__*`
+- `MIRIP_GCS__*`
+- `MIRIP_JOB__*`
+- `MIRIP_WORKER__*`
+- `MIRIP_OBSERVABILITY__*`
 
 See `src/mirip_backend/infrastructure/config/settings.py` for the full shape.
