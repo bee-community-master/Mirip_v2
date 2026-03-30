@@ -60,3 +60,38 @@ async def test_health_route_boots_with_memory_data_and_gcs_storage(gcs_client: A
     dependency_map = {item["name"]: item for item in payload["dependencies"]}
     assert dependency_map["gcs"]["status"] == "healthy"
     assert dependency_map["gcs"]["detail"] == "mirip-v2-assets"
+
+
+@pytest_asyncio.fixture
+async def broken_gcs_client(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[AsyncClient]:
+    class BrokenClient:
+        def bucket(self, _: str) -> None:
+            raise RuntimeError("missing credentials")
+
+    monkeypatch.setenv("MIRIP_APP_ENV", "test")
+    monkeypatch.setenv("MIRIP_DATA_BACKEND", "memory")
+    monkeypatch.setenv("MIRIP_STORAGE_BACKEND", "gcs")
+    monkeypatch.setenv("MIRIP_FIREBASE__ALLOW_INSECURE_DEV_AUTH", "true")
+    monkeypatch.setenv("MIRIP_GCS__PROJECT_ID", "mirip-v2")
+    monkeypatch.setenv("MIRIP_GCS__BUCKET_NAME", "mirip-v2-assets")
+    monkeypatch.setattr(GCSStorageService, "_client", lambda self: BrokenClient())
+    get_settings.cache_clear()
+
+    app: FastAPI = create_app()
+    async with LifespanManager(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            yield client
+    get_settings.cache_clear()
+
+
+async def test_health_route_degrades_when_gcs_is_misconfigured(
+    broken_gcs_client: AsyncClient,
+) -> None:
+    response = await broken_gcs_client.get("/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    dependency_map = {item["name"]: item for item in payload["dependencies"]}
+    assert payload["status"] == "degraded"
+    assert dependency_map["gcs"]["status"] == "unhealthy"

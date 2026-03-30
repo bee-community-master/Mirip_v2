@@ -10,6 +10,7 @@ from typing import Any
 from mirip_backend.domain.common.models import HealthDependency, SignedUploadSession
 from mirip_backend.infrastructure.config.settings import GCSSettings
 from mirip_backend.shared.clock import utc_now
+from mirip_backend.shared.exceptions import DependencyError
 
 
 @dataclass(slots=True)
@@ -60,7 +61,10 @@ class GCSStorageService:
                 )
             )
 
-        upload_url = await asyncio.to_thread(_create_signed_upload_url)
+        try:
+            upload_url = await asyncio.to_thread(_create_signed_upload_url)
+        except Exception as exc:
+            raise DependencyError("GCS upload session creation failed") from exc
         return SignedUploadSession(
             upload_url=upload_url,
             method="PUT",
@@ -79,7 +83,10 @@ class GCSStorageService:
             blob = bucket.blob(object_name)
             return bool(blob.exists())
 
-        return await asyncio.to_thread(_blob_exists)
+        try:
+            return await asyncio.to_thread(_blob_exists)
+        except Exception as exc:
+            raise DependencyError("GCS object lookup failed") from exc
 
     async def check(self) -> HealthDependency:
         if self.backend == "fake" or self.settings.bucket_name is None:
@@ -90,7 +97,10 @@ class GCSStorageService:
             bucket = client.bucket(self.settings.bucket_name)
             return bool(bucket.exists())
 
-        exists = await asyncio.to_thread(_bucket_exists)
+        try:
+            exists = await asyncio.to_thread(_bucket_exists)
+        except Exception as exc:
+            return HealthDependency(name="gcs", status="unhealthy", detail=str(exc))
         return HealthDependency(
             name="gcs",
             status="healthy" if exists else "unknown",

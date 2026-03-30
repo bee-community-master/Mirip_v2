@@ -34,6 +34,10 @@ def _sanitize_category(category: str) -> str:
     return safe_category
 
 
+def sanitize_category(category: str) -> str:
+    return _sanitize_category(category)
+
+
 @dataclass(slots=True, frozen=True)
 class CreateUploadSessionCommand:
     filename: str

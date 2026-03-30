@@ -9,6 +9,7 @@ from mirip_backend.domain.common.models import Page
 from mirip_backend.domain.uploads.entities import UploadAsset
 from mirip_backend.domain.uploads.repositories import UploadRepository
 from mirip_backend.shared.enums import UploadStatus
+from mirip_backend.usecases.uploads.create_upload_session import sanitize_category
 
 
 @dataclass(slots=True, frozen=True)
@@ -33,10 +34,11 @@ class ListUploadsUseCase:
     ) -> Page[UploadAsset]:
         uploads = await self._upload_repository.list_by_user(actor.user_id)
         if query.category is not None:
+            normalized_category = sanitize_category(query.category)
             uploads = [
                 item
                 for item in uploads
-                if item.metadata.get("category") == query.category.lower().strip()
+                if item.metadata.get("category") == normalized_category
             ]
         if query.status is not None:
             uploads = [item for item in uploads if item.status == query.status]

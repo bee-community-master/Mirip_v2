@@ -15,8 +15,13 @@ router = APIRouter(tags=["health"])
 @router.get("/v1/health", response_model=HealthResponse)
 async def health(container: ContainerDep) -> HealthResponse:
     dependencies = await container.health_reporter.report()
+    overall_status = (
+        "healthy"
+        if all(item.status == "healthy" for item in dependencies)
+        else "degraded"
+    )
     return HealthResponse(
-        status="healthy",
+        status=overall_status,
         version=container.settings.api.version,
         timestamp=utc_now(),
         dependencies=[

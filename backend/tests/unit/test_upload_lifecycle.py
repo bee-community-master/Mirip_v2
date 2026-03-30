@@ -104,3 +104,29 @@ async def test_list_uploads_filters_by_category_and_status() -> None:
 
     assert page.total == 1
     assert page.items[0].id == "upl-1"
+
+
+async def test_list_uploads_normalizes_category_filter() -> None:
+    repository = DocumentUploadRepository(MemoryDocumentStore())
+    await repository.create(
+        UploadAsset(
+            id="upl-3",
+            user_id="user-1",
+            filename="poster.png",
+            content_type="image/png",
+            size_bytes=128,
+            object_name="users/user-1/competition-entries/upl-3/poster.png",
+            status=UploadStatus.UPLOADED,
+            created_at=utc_now(),
+            metadata={"category": "competition-entries"},
+        )
+    )
+
+    usecase = ListUploadsUseCase(repository)
+    page = await usecase.execute(
+        actor=AuthenticatedUser(user_id="user-1"),
+        query=ListUploadsQuery(category="Competition Entries", status=UploadStatus.UPLOADED),
+    )
+
+    assert page.total == 1
+    assert page.items[0].id == "upl-3"
