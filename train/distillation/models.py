@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -11,6 +10,7 @@ import torch.nn.functional as F
 from transformers import AutoImageProcessor, AutoModel
 
 from config import ModelsConfig
+from utils import DEFAULT_IMAGE_MEAN, DEFAULT_IMAGE_STD
 
 
 def resolve_backbone_dtype(backbone_dtype: str) -> torch.dtype | None:
@@ -201,8 +201,8 @@ class BackboneAdapter(nn.Module):
         self.patch_size = 16
         self.hidden_size = 0
         self.depth = 0
-        self.image_mean = [0.485, 0.456, 0.406]
-        self.image_std = [0.229, 0.224, 0.225]
+        self.image_mean = list(DEFAULT_IMAGE_MEAN)
+        self.image_std = list(DEFAULT_IMAGE_STD)
         self.can_export_hf = False
 
     def extract_features(

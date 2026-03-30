@@ -5,26 +5,23 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from torch.utils.data import DataLoader, IterableDataset
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from config import apply_runtime_overrides, load_config
+from config import DistillationExperimentConfig, apply_runtime_overrides, load_config
 from datasets import DistillationBatchCollator, build_stage_datasets
 from engine import run_experiment
 from utils import (
+    DEFAULT_IMAGE_MEAN,
+    DEFAULT_IMAGE_STD,
     align_to_patch_multiple,
-    resolve_train_path,
     save_json,
     set_seed,
     try_enable_tf32,
 )
-
-DEFAULT_MEAN = [0.485, 0.456, 0.406]
-DEFAULT_STD = [0.229, 0.224, 0.225]
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,7 +54,7 @@ def _dataset_length(dataset: object) -> int | None:
     return None
 
 
-def _peek_batch(dataset: object, batch_size: int) -> dict[str, Any]:
+def _peek_batch(dataset: object, batch_size: int) -> dict[str, object]:
     loader = DataLoader(
         dataset,
         batch_size=max(1, batch_size),
@@ -69,7 +66,7 @@ def _peek_batch(dataset: object, batch_size: int) -> dict[str, Any]:
     return next(iter(loader))
 
 
-def validate_data(config, report_path: str | None = None) -> dict[str, Any]:
+def validate_data(config: DistillationExperimentConfig, report_path: str | None = None) -> dict[str, object]:
     """Builds a minimal sample batch to verify staged data availability and split wiring."""
 
     stages = config.active_stages()
@@ -79,8 +76,8 @@ def validate_data(config, report_path: str | None = None) -> dict[str, Any]:
     train_dataset, val_dataset = build_stage_datasets(
         config,
         resolution=resolution,
-        mean=DEFAULT_MEAN,
-        std=DEFAULT_STD,
+        mean=DEFAULT_IMAGE_MEAN,
+        std=DEFAULT_IMAGE_STD,
     )
     train_count = _dataset_length(train_dataset)
     val_count = _dataset_length(val_dataset)

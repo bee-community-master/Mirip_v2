@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any, Sequence
@@ -17,11 +16,12 @@ sys.path.insert(0, str(ROOT))
 
 from config import DistillationExperimentConfig, StageConfig, apply_runtime_overrides, load_config
 from datasets import DistillRecord, DistillationBatchCollator, build_stage_datasets
-from losses import DistillationLossBundle, LossBreakdown
-from models import DistillationBatch, TeacherStudentDistillModel
+from losses import DistillationLossBundle, LossBreakdown, build_loss_bundle
+from models import TeacherStudentDistillModel
 from utils import (
     align_to_patch_multiple,
     autocast_context,
+    build_pairwise_handoff_command,
     ensure_dir,
     pca_rgb_map,
     resolve_precision,
@@ -52,15 +52,6 @@ def parse_args() -> argparse.Namespace:
         help="Apply smoke overrides before evaluation.",
     )
     return parser.parse_args()
-
-
-def _build_loss_bundle(config: DistillationExperimentConfig, stage: StageConfig) -> DistillationLossBundle:
-    return DistillationLossBundle(
-        weights=stage.loss_weights,
-        patch_loss_type=config.distillation.patch_loss_type,
-        rel_patch_sample_size=config.distillation.rel_patch_sample_size,
-        use_relational_loss=config.distillation.use_relational_loss,
-    )
 
 
 def _resolve_stage(
@@ -262,11 +253,7 @@ def _default_output_path(
 def _pairwise_handoff_command(config: DistillationExperimentConfig, checkpoint_payload: dict[str, Any]) -> str:
     run_name = str(checkpoint_payload.get("run_name") or "distill_run")
     export_dir = resolve_train_path(Path(config.paths.checkpoint_root) / run_name / config.paths.student_export_dirname)
-    try:
-        relative = export_dir.relative_to(resolve_train_path(".").parent)
-    except ValueError:
-        relative = export_dir
-    return f"python3 train/training/train_dinov3.py --model-name {relative}"
+    return build_pairwise_handoff_command(export_dir)
 
 
 def _maybe_export_student_backbone(
@@ -304,7 +291,7 @@ def evaluate_checkpoint(
     model.to(device)
     model.eval()
     val_loader, val_count = _build_val_loader(config, stage, model)
-    loss_bundle = _build_loss_bundle(config, stage)
+    loss_bundle = build_loss_bundle(distillation_config=config.distillation, stage=stage)
     precision = resolve_precision(config.optimizer.precision, device)
 
     breakdowns: list[LossBreakdown] = []

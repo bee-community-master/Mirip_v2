@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config import LossWeights
+from config import DistillationConfig, LossWeights, StageConfig
 
 
 def _normalize(features: torch.Tensor) -> torch.Tensor:
@@ -179,3 +178,18 @@ class DistillationLossBundle(nn.Module):
             components["loss_mid"].append(float(item.mid.detach().cpu().item()))
             components["loss_pool"].append(float(item.pool.detach().cpu().item()))
         return {key: sum(values) / len(values) for key, values in components.items()}
+
+
+def build_loss_bundle(
+    *,
+    distillation_config: DistillationConfig,
+    stage: StageConfig,
+) -> DistillationLossBundle:
+    """Builds a loss bundle using the resolved distillation config and stage weights."""
+
+    return DistillationLossBundle(
+        weights=stage.loss_weights,
+        patch_loss_type=distillation_config.patch_loss_type,
+        rel_patch_sample_size=distillation_config.rel_patch_sample_size,
+        use_relational_loss=distillation_config.use_relational_loss,
+    )

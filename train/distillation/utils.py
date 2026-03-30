@@ -3,9 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import random
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -14,8 +12,9 @@ import torch
 
 DISTILL_ROOT = Path(__file__).resolve().parent
 TRAIN_ROOT = DISTILL_ROOT.parent
-REPO_ROOT = TRAIN_ROOT.parent
 RAW_IMAGES_DIRNAME = "raw_images"
+DEFAULT_IMAGE_MEAN = [0.485, 0.456, 0.406]
+DEFAULT_IMAGE_STD = [0.229, 0.224, 0.225]
 
 
 def ensure_dir(path: str | Path) -> Path:
@@ -120,12 +119,6 @@ def setup_logging(level: str = "INFO") -> logging.Logger:
     return logger
 
 
-def maybe_dataclass_to_dict(payload: Any) -> Any:
-    if is_dataclass(payload):
-        return asdict(payload)
-    return payload
-
-
 def select_device(device: str | None = None) -> torch.device:
     requested = (device or "cuda").lower()
     if requested.startswith("cuda") and torch.cuda.is_available():
@@ -189,8 +182,12 @@ def try_enable_tf32() -> None:
     torch.backends.cudnn.allow_tf32 = True
 
 
-def env_flag(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
+def build_pairwise_handoff_command(export_dir: str | Path) -> str:
+    """Builds the downstream pairwise training command for an exported student backbone."""
+
+    export_path = Path(export_dir)
+    try:
+        relative_path = export_path.relative_to(TRAIN_ROOT.parent)
+    except ValueError:
+        relative_path = export_path
+    return f"python3 train/training/train_dinov3.py --model-name {relative_path}"

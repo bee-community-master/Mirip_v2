@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import json
 import math
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,14 +22,15 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     wandb = None
 
-from config import DistillationExperimentConfig, LossWeights, StageConfig
+from config import DistillationExperimentConfig, StageConfig
 from datasets import DistillationBatchCollator, build_stage_datasets
-from losses import DistillationLossBundle, LossBreakdown
+from losses import DistillationLossBundle, LossBreakdown, build_loss_bundle
 from models import DistillationBatch, TeacherStudentDistillModel
 from utils import (
     append_jsonl,
     align_to_patch_multiple,
     autocast_context,
+    build_pairwise_handoff_command,
     ensure_dir,
     format_seconds,
     resolve_precision,
@@ -119,16 +119,6 @@ def _dataloader_length(loader: DataLoader) -> int:
     raise RuntimeError(
         "DataLoader length is required to build a cosine schedule. "
         "For IterableDataset/WebDataset, provide finite train/val limits."
-    )
-
-
-def _loss_bundle(config: DistillationExperimentConfig, stage: StageConfig) -> DistillationLossBundle:
-    weights = LossWeights(**asdict(stage.loss_weights))
-    return DistillationLossBundle(
-        weights=weights,
-        patch_loss_type=config.distillation.patch_loss_type,
-        rel_patch_sample_size=config.distillation.rel_patch_sample_size,
-        use_relational_loss=config.distillation.use_relational_loss,
     )
 
 
@@ -423,8 +413,7 @@ def _log_epoch_metrics(
 
 
 def _pairwise_handoff_command(run_dirs: RunDirectories) -> str:
-    model_path = run_dirs.export_dir.relative_to(resolve_train_path(".").parent)
-    return f"python3 train/training/train_dinov3.py --model-name {model_path}"
+    return build_pairwise_handoff_command(run_dirs.export_dir)
 
 
 def run_stage(
@@ -483,7 +472,7 @@ def run_stage(
         if int(resume_payload.get("stage_index", 0)) == stage_index:
             start_epoch = int(resume_payload.get("epoch_in_stage", -1)) + 1
 
-    loss_bundle = _loss_bundle(config, stage)
+    loss_bundle = build_loss_bundle(distillation_config=config.distillation, stage=stage)
     report_path = run_dirs.report_dir / config.logging.jsonl_name
     best_checkpoint_path = run_dirs.checkpoint_dir / "best.pt"
     last_checkpoint_path = run_dirs.checkpoint_dir / "last.pt"
