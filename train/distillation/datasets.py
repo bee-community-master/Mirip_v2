@@ -89,6 +89,24 @@ def _resolve_webdataset_url_pattern(url_pattern: str, split: str) -> str:
     return url_pattern.format(split=split)
 
 
+def _resolve_metadata_text(
+    payload: dict[str, Any],
+    prepared_row: dict[str, str] | None,
+    *keys: str,
+) -> str:
+    """Returns the first non-empty metadata value from JSON payload or prepared split row."""
+
+    for key in keys:
+        value = payload.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+        if prepared_row is not None:
+            prepared_value = prepared_row.get(key)
+            if prepared_value is not None and str(prepared_value).strip():
+                return str(prepared_value).strip()
+    return ""
+
+
 class MiripStagedSource(RecordSource):
     """Loads image records from Mirip staged metadata JSON files."""
 
@@ -117,6 +135,32 @@ class MiripStagedSource(RecordSource):
             None,
         )
 
+    def _build_record(
+        self,
+        *,
+        payload: dict[str, Any],
+        metadata_path: Path,
+        image_path: str,
+        image_index: int,
+        split: str,
+        prepared_row: dict[str, str] | None,
+    ) -> DistillRecord:
+        department = _resolve_metadata_text(payload, prepared_row, "department", "normalized_dept")
+        post_no = str(payload.get("post_no") or metadata_path.stem)
+        return DistillRecord(
+            sample_id=f"{post_no}_{image_index}",
+            image_path=image_path,
+            split=split,
+            metadata_path=str(metadata_path.relative_to(self.metadata_dir.parent)),
+            post_no=post_no,
+            tier=_resolve_metadata_text(payload, prepared_row, "tier"),
+            department=department,
+            normalized_dept=_resolve_metadata_text(payload, prepared_row, "normalized_dept", "department"),
+            anchor_group=_resolve_metadata_text(payload, prepared_row, "anchor_group"),
+            university=_resolve_metadata_text(payload, prepared_row, "university"),
+            work_type=_resolve_metadata_text(payload, prepared_row, "work_type"),
+        )
+
     def load_records(self) -> list[DistillRecord]:
         records: list[DistillRecord] = []
         for metadata_path in sorted(self.metadata_dir.glob("*.json")):
@@ -131,26 +175,16 @@ class MiripStagedSource(RecordSource):
                 split, prepared_row = self._resolve_split(normalized_path, payload)
                 if split is None:
                     continue
-                department = str(
-                    payload.get("department")
-                    or payload.get("normalized_dept")
-                    or (prepared_row or {}).get("normalized_dept")
-                    or ""
-                ).strip()
-                record = DistillRecord(
-                    sample_id=f"{payload.get('post_no', metadata_path.stem)}_{index}",
-                    image_path=normalized_path,
-                    split=split,
-                    metadata_path=str(metadata_path.relative_to(self.metadata_dir.parent)),
-                    post_no=str(payload.get("post_no") or metadata_path.stem),
-                    tier=str(payload.get("tier") or (prepared_row or {}).get("tier") or "").strip(),
-                    department=department,
-                    normalized_dept=str(payload.get("normalized_dept") or (prepared_row or {}).get("normalized_dept") or "").strip(),
-                    anchor_group=str(payload.get("anchor_group") or (prepared_row or {}).get("anchor_group") or "").strip(),
-                    university=str(payload.get("university") or (prepared_row or {}).get("university") or "").strip(),
-                    work_type=str(payload.get("work_type") or (prepared_row or {}).get("work_type") or "").strip(),
+                records.append(
+                    self._build_record(
+                        payload=payload,
+                        metadata_path=metadata_path,
+                        image_path=normalized_path,
+                        image_index=index,
+                        split=split,
+                        prepared_row=prepared_row,
+                    )
                 )
-                records.append(record)
         return records
 
 
@@ -348,6 +382,72 @@ def _apply_limits(records: Iterable[DistillRecord], limit: int | None) -> list[D
     return items
 
 
+def _build_stage_transforms(
+    *,
+    config: DistillationExperimentConfig,
+    resolution: int,
+    mean: Sequence[float],
+    std: Sequence[float],
+) -> tuple[transforms.Compose, transforms.Compose]:
+    return (
+        build_transforms(
+            resolution=resolution,
+            mean=mean,
+            std=std,
+            is_train=True,
+            augmentation=config.data.augmentation,
+        ),
+        build_transforms(
+            resolution=resolution,
+            mean=mean,
+            std=std,
+            is_train=False,
+            augmentation=config.data.augmentation,
+        ),
+    )
+
+
+def _build_webdataset_stage_datasets(
+    *,
+    config: DistillationExperimentConfig,
+    train_transform: transforms.Compose,
+    val_transform: transforms.Compose,
+) -> tuple[Dataset, Dataset]:
+    if not config.data.webdataset_url_pattern:
+        raise ValueError("webdataset_url_pattern must be set for source_type=webdataset")
+    if config.data.train_limit is None or config.data.val_limit is None:
+        raise ValueError("train_limit and val_limit must be set for source_type=webdataset")
+    return (
+        WebDatasetSource(
+            url_pattern=_resolve_webdataset_url_pattern(config.data.webdataset_url_pattern, "train"),
+            split="train",
+            transform=train_transform,
+            limit=config.data.train_limit,
+        ),
+        WebDatasetSource(
+            url_pattern=_resolve_webdataset_url_pattern(config.data.webdataset_url_pattern, "val"),
+            split="val",
+            transform=val_transform,
+            limit=config.data.val_limit,
+        ),
+    )
+
+
+def _split_stage_records(
+    records: Sequence[DistillRecord],
+    *,
+    train_limit: int | None,
+    val_limit: int | None,
+) -> tuple[list[DistillRecord], list[DistillRecord]]:
+    train_records = _apply_limits((record for record in records if record.split == "train"), train_limit)
+    val_records = _apply_limits((record for record in records if record.split == "val"), val_limit)
+    if not train_records:
+        raise RuntimeError("No training records available for distillation")
+    if not val_records:
+        raise RuntimeError("No validation records available for distillation")
+    return train_records, val_records
+
+
 def build_record_source(config: DistillationExperimentConfig) -> RecordSource:
     """Builds a record source for the configured dataset backend."""
 
@@ -372,66 +472,36 @@ def build_stage_datasets(
 ) -> tuple[Dataset, Dataset]:
     """Builds train/val datasets for a specific training stage resolution."""
 
+    train_transform, val_transform = _build_stage_transforms(
+        config=config,
+        resolution=resolution,
+        mean=mean,
+        std=std,
+    )
+
     if config.data.source_type == "webdataset":
-        if not config.data.webdataset_url_pattern:
-            raise ValueError("webdataset_url_pattern must be set for source_type=webdataset")
-        if config.data.train_limit is None or config.data.val_limit is None:
-            raise ValueError("train_limit and val_limit must be set for source_type=webdataset")
-        train_dataset = WebDatasetSource(
-            url_pattern=_resolve_webdataset_url_pattern(config.data.webdataset_url_pattern, "train"),
-            split="train",
-            transform=build_transforms(
-                resolution=resolution,
-                mean=mean,
-                std=std,
-                is_train=True,
-                augmentation=config.data.augmentation,
-            ),
-            limit=config.data.train_limit,
+        return _build_webdataset_stage_datasets(
+            config=config,
+            train_transform=train_transform,
+            val_transform=val_transform,
         )
-        val_dataset = WebDatasetSource(
-            url_pattern=_resolve_webdataset_url_pattern(config.data.webdataset_url_pattern, "val"),
-            split="val",
-            transform=build_transforms(
-                resolution=resolution,
-                mean=mean,
-                std=std,
-                is_train=False,
-                augmentation=config.data.augmentation,
-            ),
-            limit=config.data.val_limit,
-        )
-        return train_dataset, val_dataset
 
     source = build_record_source(config)
     records = source.load_records()
-    train_records = _apply_limits((record for record in records if record.split == "train"), config.data.train_limit)
-    val_records = _apply_limits((record for record in records if record.split == "val"), config.data.val_limit)
-    if not train_records:
-        raise RuntimeError("No training records available for distillation")
-    if not val_records:
-        raise RuntimeError("No validation records available for distillation")
+    train_records, val_records = _split_stage_records(
+        records,
+        train_limit=config.data.train_limit,
+        val_limit=config.data.val_limit,
+    )
     train_dataset = DistillationImageDataset(
         train_records,
         image_root=config.paths.image_root,
-        transform=build_transforms(
-            resolution=resolution,
-            mean=mean,
-            std=std,
-            is_train=True,
-            augmentation=config.data.augmentation,
-        ),
+        transform=train_transform,
     )
     val_dataset = DistillationImageDataset(
         val_records,
         image_root=config.paths.image_root,
-        transform=build_transforms(
-            resolution=resolution,
-            mean=mean,
-            std=std,
-            is_train=False,
-            augmentation=config.data.augmentation,
-        ),
+        transform=val_transform,
     )
     return train_dataset, val_dataset
 
