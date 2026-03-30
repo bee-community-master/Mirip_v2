@@ -253,12 +253,12 @@ v2 실행 시 아래 산출물을 생성하거나 유지한다.
 | `metadata_manifest.csv` | 최종 학습 적격 manifest |
 | `pairs_train.csv` | train pair |
 | `pairs_val.csv` | val pair |
-| `reports/data_audit.md` | 데이터 품질 점검 보고서 |
-| `reports/dinov2_baseline.json` | DINOv2 baseline 결과 |
-| `reports/dinov3_teacher.json` | DINOv3 teacher 결과 |
-| `checkpoints/dinov2_baseline/` | baseline checkpoint |
-| `checkpoints/dinov3_vitl16/` | DINOv3 teacher checkpoint |
-| `anchors/anchors.pt` | 승인된 모델에서 다시 만든 anchor |
+| `train/output_models/logs/data_audit.md` | 데이터 품질 점검 보고서 |
+| `train/output_models/logs/dinov2_baseline.json` | DINOv2 baseline 결과 |
+| `train/output_models/logs/dinov3_teacher.json` | DINOv3 teacher 결과 |
+| `train/output_models/checkpoints/dinov2_baseline/` | baseline checkpoint |
+| `train/output_models/checkpoints/dinov3_vitl16/` | DINOv3 teacher checkpoint |
+| `train/output_models/anchors/anchors.pt` | 승인된 모델에서 다시 만든 anchor |
 
 추가로 남겨도 되는 비필수 산출물:
 
@@ -327,7 +327,7 @@ teacher 단계에서는 `university_probabilities`를 계속 heuristic으로 둔
 
 산출물:
 
-- `reports/data_audit.md`
+- `train/output_models/logs/data_audit.md`
 - `metadata_manifest.csv`
 
 할 일:
@@ -349,9 +349,9 @@ teacher 단계에서는 `university_probabilities`를 계속 heuristic으로 둔
 
 산출물:
 
-- `reports/dinov2_baseline.json`
-- `checkpoints/dinov2_baseline/`
-- 재생성된 `anchors/anchors.pt`
+- `train/output_models/logs/dinov2_baseline.json`
+- `train/output_models/checkpoints/dinov2_baseline/`
+- 재생성된 `train/output_models/anchors/anchors.pt`
 
 고정 원칙:
 
@@ -381,8 +381,8 @@ teacher 단계에서는 `university_probabilities`를 계속 heuristic으로 둔
 
 산출물:
 
-- `reports/dinov3_teacher.json`
-- `checkpoints/dinov3_vitl16/`
+- `train/output_models/logs/dinov3_teacher.json`
+- `train/output_models/checkpoints/dinov3_vitl16/`
 
 backbone 고정:
 
@@ -538,7 +538,7 @@ teacher 승인 전제:
 
 ## 11. 바로 다음 액션
 
-1. `reports/data_audit.md` 작성
+1. `train/output_models/logs/data_audit.md` 작성
 2. 2,734개 학습 적격 샘플 기준 `metadata_manifest.csv` 생성
 3. `evaluate.py`와 실제 ranking model 시그니처 정합성 수정
 4. DINOv2 baseline 재학습 및 anchor 재생성

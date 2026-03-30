@@ -24,8 +24,8 @@ from training.utils import (
     write_rows_to_csv,
 )
 
-DEFAULT_RAW_REPORT = "reports/readiness_report.json"
-DEFAULT_PREPARED_REPORT = "reports/prepared_readiness_report.json"
+DEFAULT_RAW_REPORT = "output_models/logs/readiness_report.json"
+DEFAULT_PREPARED_REPORT = "output_models/logs/prepared_readiness_report.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,7 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", default="training/data/snapshot_manifest.csv")
     parser.add_argument("--prepared-dir", default="training/data")
     parser.add_argument("--baseline-readiness-report", default=DEFAULT_RAW_REPORT)
-    parser.add_argument("--baseline-snapshot-report", default="reports/snapshot_report.json")
+    parser.add_argument("--baseline-snapshot-report", default="output_models/logs/snapshot_report.json")
     parser.add_argument("--min-group-size", type=int, default=15)
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)

@@ -58,7 +58,7 @@ SSH/Jupyter 런타입은 Docker entrypoint를 Vast 쪽 초기화 스크립트로
 - SSH / execute / destroy 제어 스크립트
 - DINOv3 학습용 stage runner (`train/scripts/vast_ai_training_runner.py`)
 - bootstrap / validate-upload / smoke / full 원격 실행 커맨드
-- 후처리 기준 best checkpoint registry (`train/reports/dinov3_vit7b16_postprocess_registry.json`)
+- 후처리 기준 best checkpoint registry (`train/output_models/logs/dinov3_vit7b16_postprocess_registry.json`)
 - hourly checkpoint sync/prune + macOS `launchd` 설치 커맨드
 
 ## 현재 Mirip_v2 학습 직전 절차
@@ -68,7 +68,7 @@ SSH/Jupyter 런타입은 Docker entrypoint를 Vast 쪽 초기화 스크립트로
 3. local snapshot/pairs/reports 생성
 4. local prepared validator 실행
 5. Vast instance 준비
-6. `train/data`, `train/training/data`, `train/reports` 업로드
+6. `train/data`, `train/training/data`, `train/output_models/logs` 업로드
 7. remote `bootstrap`
 8. remote `validate-upload`
 9. remote `smoke`
@@ -78,7 +78,7 @@ SSH/Jupyter 런타입은 Docker entrypoint를 Vast 쪽 초기화 스크립트로
 
 - `train/.env`에 `VAST_INSTANCE_ID`를 추가하고 기존 Vast API/SSH 키 설정과 같이 관리한다.
 - local hourly 작업은 `python3 train/scripts/vast_ai_training_runner.py sync-prune`를 사용한다.
-- 이 작업은 remote artifacts를 local로 먼저 내려받고, `train/reports/dinov3_vit7b16_postprocess_registry.json`을 읽어 remote best checkpoint 1개만 남긴다.
+- 이 작업은 remote artifacts를 local로 먼저 내려받고, `train/output_models/logs/dinov3_vit7b16_postprocess_registry.json`을 읽어 remote best checkpoint 1개만 남긴다.
 - best 판정은 hourly 작업에서 다시 평가하지 않고, full 후처리 단계가 남긴 registry를 그대로 사용한다.
 - macOS background 실행은 `install-launch-agent` / `uninstall-launch-agent` 서브커맨드로 관리한다.
 

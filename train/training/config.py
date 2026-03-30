@@ -28,7 +28,7 @@ class DinoV3TrainingConfig:
     early_stopping_min_delta: float = 1e-4
     gradient_clip_norm: float = 1.0
     scheduler_eta_min: float = 1e-6
-    checkpoint_dir: str = field(default_factory=lambda: "checkpoints/dinov3_vitl16")
+    checkpoint_dir: str = field(default_factory=lambda: "output_models/checkpoints/dinov3_vitl16")
     save_every_n_epochs: int = 1
     num_workers: int = field(default_factory=default_num_workers)
     pin_memory: bool = True

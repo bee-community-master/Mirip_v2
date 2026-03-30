@@ -21,7 +21,7 @@ class PostprocessRegistryTests(unittest.TestCase):
             candidate_report.write_text(
                 json.dumps(
                     {
-                        "checkpoint_relative": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
+                        "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
                         "metrics": {
                             "anchor_tier_accuracy": 0.72,
                             "val_accuracy": 0.81,
@@ -34,18 +34,18 @@ class PostprocessRegistryTests(unittest.TestCase):
             )
 
             payload = update_postprocess_registry(
-                current_checkpoint="checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
+                current_checkpoint="output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
                 current_report=candidate_report,
                 output_registry=registry_path,
             )
 
             self.assertEqual(
                 payload["selected_best_checkpoint_after_compare"],
-                "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
             )
             self.assertEqual(
                 payload["retained_checkpoints"],
-                ["checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt"],
+                ["output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt"],
             )
             self.assertEqual(payload["decision"]["decision"], "candidate_selected_initial")
 
@@ -58,7 +58,7 @@ class PostprocessRegistryTests(unittest.TestCase):
             candidate_report.write_text(
                 json.dumps(
                     {
-                        "checkpoint_relative": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
+                        "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
                         "metrics": {
                             "anchor_tier_accuracy": 0.71,
                             "val_accuracy": 0.90,
@@ -72,8 +72,8 @@ class PostprocessRegistryTests(unittest.TestCase):
             registry_path.write_text(
                 json.dumps(
                     {
-                        "selected_best_checkpoint_after_compare": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0006.pt",
-                        "selected_best_report_after_compare": "reports/best.json",
+                        "selected_best_checkpoint_after_compare": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0006.pt",
+                        "selected_best_report_after_compare": "output_models/logs/best.json",
                         "selected_best_metrics_after_compare": {
                             "anchor_tier_accuracy": 0.75,
                             "val_accuracy": 0.80,
@@ -87,14 +87,14 @@ class PostprocessRegistryTests(unittest.TestCase):
             )
 
             payload = update_postprocess_registry(
-                current_checkpoint="checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
+                current_checkpoint="output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
                 current_report=candidate_report,
                 output_registry=registry_path,
             )
 
             self.assertEqual(
                 payload["selected_best_checkpoint_after_compare"],
-                "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0006.pt",
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0006.pt",
             )
             self.assertEqual(payload["decision"]["criterion"], "anchor_tier_accuracy")
             self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
