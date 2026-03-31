@@ -280,7 +280,7 @@ async def test_gpu_torch_mode_keeps_stub_placeholder_behavior(tmp_path: Path) ->
 
     result = await service.evaluate(_make_job())
 
-    assert result.summary == "Single diagnosis completed."
+    assert result.summary == "단일 작품 진단이 완료되었습니다."
     assert result.tier in {"S", "A", "B", "C"}
 
 

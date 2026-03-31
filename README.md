@@ -8,9 +8,8 @@ The repository is organized so each area can evolve independently while still sh
 - `frontend/` contains the SvelteKit mock application used to validate the Mirip v2 UX flows.
 - The mock currently covers the home, diagnosis, competitions, and portfolio screens with local fixtures and reusable UI components.
 - Run the standard frontend scripts from `frontend/`: `npm run check`, `npm run test`, and `npm run build`.
-- For diagnosis API integration, create `frontend/.env` from `frontend/.env.example` and set
-  `PUBLIC_MIRIP_API_BASE_URL` to the backend base URL. The default local value is
-  `http://localhost:8000`.
+- The frontend is configured for static Vercel deployment as an SPA fallback via `@sveltejs/adapter-static`.
+- For diagnosis API integration, create `frontend/.env` from `frontend/.env.example` and set `PUBLIC_MIRIP_API_BASE_URL` to the backend base URL. The default local value is `http://localhost:8000`.
 
 ## Backend
 
@@ -22,6 +21,12 @@ The backend scaffold is designed for:
 - Spot GPU VM workers for heavyweight inference jobs
 
 See [BACKEND_V2_PLAN.md](./BACKEND_V2_PLAN.md) for the implementation plan and [backend/README.md](./backend/README.md) for local backend commands.
+
+### Deployment targets
+
+- Frontend: deploy `frontend/` to Vercel
+- Backend (current recommended profile): deploy `backend/` to GCP as `Cloud Run API + Firestore + Spot VM stub workers`
+- Backend (future model profile): switch the worker stack to `cpu_onnx` + GCS model bundles when the serving bundle is ready
 
 ## Local Diagnosis Flow
 
@@ -47,11 +52,9 @@ npm install
 npm run dev
 ```
 
-The frontend diagnosis screen talks directly to the backend API, creates upload sessions, completes
-uploads, creates diagnosis jobs, and polls for worker results.
+The frontend diagnosis screen talks directly to the backend API, creates upload sessions, completes uploads, creates diagnosis jobs, and polls for worker results.
 
-If you want to exercise real signed uploads instead of fake mode, keep `MIRIP_STORAGE_BACKEND=gcs`
-and provide valid `MIRIP_GCS__*` credentials in `backend/.env`.
+If you want to exercise real signed uploads instead of fake mode, keep `MIRIP_STORAGE_BACKEND=gcs` and provide valid `MIRIP_GCS__*` credentials in `backend/.env`.
 
 ## Training
 

@@ -8,7 +8,7 @@ from mirip_backend.domain.diagnosis.entities import DiagnosisJob, DiagnosisResul
 from mirip_backend.domain.diagnosis.repositories import DiagnosisResultRepository
 from mirip_backend.shared.clock import utc_now
 from mirip_backend.shared.ids import new_id
-from mirip_backend.worker.inference.service import InferenceOutput
+from mirip_backend.worker.inference.types import InferenceOutput
 
 
 @dataclass(slots=True)

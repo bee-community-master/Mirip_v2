@@ -3,27 +3,20 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
-from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 from mirip_backend.domain.diagnosis.metadata import INPUT_OBJECT_NAMES_METADATA_KEY
 from mirip_backend.infrastructure.gcs.service import GCSStorageService
-from mirip_backend.worker.inference.diagnosis_runtime import DiagnosisBundleRuntime
+from mirip_backend.usecases.diagnosis.stub_result import build_stub_inference_output
 from mirip_backend.worker.inference.model_bundle import (
     MaterializedModelBundle,
     materialize_model_bundle,
 )
+from mirip_backend.worker.inference.types import InferenceOutput
 
-
-@dataclass(slots=True, frozen=True)
-class InferenceOutput:
-    tier: str
-    scores: dict[str, float]
-    probabilities: list[dict[str, object]]
-    feedback: dict[str, object] | None
-    summary: str | None
+if TYPE_CHECKING:
+    from mirip_backend.worker.inference.diagnosis_runtime import DiagnosisBundleRuntime
 
 
 class InferenceService(Protocol):
@@ -101,6 +94,8 @@ class WorkerInferenceService:
                 require_diagnosis_extras=True,
             )
             self._session = self._build_onnx_session(self._bundle)
+            from mirip_backend.worker.inference.diagnosis_runtime import DiagnosisBundleRuntime
+
             self._runtime = DiagnosisBundleRuntime.load(self._bundle)
         except NonRetryableInferenceError:
             raise
@@ -121,50 +116,6 @@ class WorkerInferenceService:
             str(bundle.manifest.encoder_path(bundle.local_dir)),
             sess_options=session_options,
             providers=["CPUExecutionProvider"],
-        )
-
-    @staticmethod
-    def _build_stub_output(job: DiagnosisJob) -> InferenceOutput:
-        digest = hashlib.sha256(job.id.encode("utf-8")).hexdigest()
-        tier = ["S", "A", "B", "C"][int(digest[0], 16) % 4]
-        base = 55.0 + (int(digest[1:3], 16) / 255.0) * 35.0
-        scores = {
-            "composition": round(base, 1),
-            "technique": round(min(100.0, base + 3.1), 1),
-            "creativity": round(max(0.0, base - 1.8), 1),
-            "completeness": round(min(100.0, base + 1.2), 1),
-        }
-        universities = [
-            ("홍익대학교", "시각디자인과"),
-            ("국민대학교", "공업디자인학과"),
-            ("서울대학교", "디자인학부"),
-        ]
-        probabilities = [
-            {
-                "university": university,
-                "department": department,
-                "probability": round(max(0.05, min(0.95, 0.4 + index * 0.12)), 3),
-            }
-            for index, (university, department) in enumerate(universities)
-        ]
-        feedback: dict[str, object] | None = None
-        if job.include_feedback:
-            feedback = {
-                "strengths": ["구도 안정감이 좋습니다.", "의도 전달력이 분명합니다."],
-                "improvements": ["표현 밀도를 더 높여보세요."],
-                "overall": f"{job.department} 기준으로 {tier} 티어 예측입니다.",
-            }
-        summary = (
-            f"Compared {len(job.upload_ids)} uploads."
-            if job.job_type == "compare"
-            else "Single diagnosis completed."
-        )
-        return InferenceOutput(
-            tier=tier,
-            scores=scores,
-            probabilities=probabilities,
-            feedback=feedback,
-            summary=summary,
         )
 
     @staticmethod
@@ -278,7 +229,7 @@ class WorkerInferenceService:
     async def evaluate(self, job: DiagnosisJob) -> InferenceOutput:
         await self.load()
         if self._mode in {"stub", "gpu_torch"}:
-            return self._build_stub_output(job)
+            return build_stub_inference_output(job)
         return await self._evaluate_cpu_onnx(job)
 
 
