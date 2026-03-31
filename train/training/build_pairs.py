@@ -17,13 +17,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate train/val/test metadata and pair CSVs.")
     parser.add_argument("--manifest", default="training/data/snapshot_manifest.csv")
     parser.add_argument("--output-dir", default="training/data")
-    parser.add_argument("--train-ratio", type=float, default=0.75)
-    parser.add_argument("--val-ratio", type=float, default=0.15)
-    parser.add_argument("--total-pairs", type=int, default=50_000)
+    parser.add_argument("--train-ratio", type=float, default=0.8)
+    parser.add_argument("--val-ratio", type=float, default=0.1)
+    parser.add_argument("--train-pairs-target", type=int, default=40_000)
+    parser.add_argument("--val-pairs-target", type=int, default=5_000)
     parser.add_argument("--same-dept-ratio", type=float, default=0.5)
     parser.add_argument("--min-score-gap", type=float, default=5.0)
-    parser.add_argument("--max-appearances", type=int, default=30)
-    parser.add_argument("--adjacent-tier-ratio", type=float, default=0.7)
+    parser.add_argument("--max-appearances", type=int, default=48)
+    parser.add_argument("--distance1-ratio", type=float, default=0.6)
+    parser.add_argument("--distance2-ratio", type=float, default=0.3)
+    parser.add_argument("--distance3-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -43,11 +46,14 @@ def main() -> int:
             output_dir=output_dir,
             train_ratio=args.train_ratio,
             val_ratio=args.val_ratio,
-            total_pairs=args.total_pairs,
+            train_pairs_target=args.train_pairs_target,
+            val_pairs_target=args.val_pairs_target,
             same_dept_ratio=args.same_dept_ratio,
             min_score_gap=args.min_score_gap,
             max_appearances=args.max_appearances,
-            adjacent_tier_ratio=args.adjacent_tier_ratio,
+            distance1_ratio=args.distance1_ratio,
+            distance2_ratio=args.distance2_ratio,
+            distance3_ratio=args.distance3_ratio,
             seed=args.seed,
             strict=True,
         )

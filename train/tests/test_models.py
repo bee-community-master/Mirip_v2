@@ -35,7 +35,9 @@ if TORCH_AVAILABLE:
             self.layernorm = torch.nn.LayerNorm(8)
 
         def forward(self, pixel_values: torch.Tensor) -> types.SimpleNamespace:
-            return types.SimpleNamespace(last_hidden_state=pixel_values.unsqueeze(1))
+            return types.SimpleNamespace(
+                last_hidden_state=torch.stack((pixel_values, pixel_values * 2), dim=1)
+            )
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "torch is required for model tests")
@@ -75,3 +77,47 @@ class ModelTests(unittest.TestCase):
         self.assertTrue(extractor.model.encoder.layer[1].training)
         self.assertTrue(extractor.model.encoder.layer[2].training)
         self.assertTrue(extractor.model.layernorm.training)
+
+    def test_cls_mean_patch_concat_doubles_feature_dimension(self) -> None:
+        fake_transformers = types.SimpleNamespace(
+            AutoModel=types.SimpleNamespace(from_pretrained=mock.Mock(return_value=_FakeBackbone()))
+        )
+        spec = importlib.util.spec_from_file_location("mirip_training_models_pool_test", MODELS_PATH)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+
+        with mock.patch.dict(sys.modules, {"transformers": fake_transformers}):
+            assert spec and spec.loader
+            spec.loader.exec_module(module)
+
+        extractor = module.DinoV3FeatureExtractor(
+            model_name="dummy-model",
+            freeze_backbone=True,
+            feature_pool="cls_mean_patch_concat",
+        )
+        features = extractor(torch.arange(1, 9, dtype=torch.float32).unsqueeze(0))
+
+        self.assertEqual(tuple(features.shape), (1, 16))
+        self.assertTrue(torch.allclose(features[:, :8].norm(dim=1), torch.ones(1), atol=1e-5))
+        self.assertTrue(torch.allclose(features[:, 8:].norm(dim=1), torch.ones(1), atol=1e-5))
+
+    def test_pairwise_model_linear_head_emits_single_score(self) -> None:
+        fake_transformers = types.SimpleNamespace(
+            AutoModel=types.SimpleNamespace(from_pretrained=mock.Mock(return_value=_FakeBackbone()))
+        )
+        spec = importlib.util.spec_from_file_location("mirip_training_models_head_test", MODELS_PATH)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+
+        with mock.patch.dict(sys.modules, {"transformers": fake_transformers}):
+            assert spec and spec.loader
+            spec.loader.exec_module(module)
+
+        model = module.DinoV3PairwiseModel(
+            model_name="dummy-model",
+            head_type="linear",
+            feature_pool="cls_mean_patch_concat",
+            freeze_backbone=True,
+        )
+        scores = model.predict_score(torch.arange(1, 17, dtype=torch.float32).reshape(2, 8))
+        self.assertEqual(tuple(scores.shape), (2, 1))

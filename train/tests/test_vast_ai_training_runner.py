@@ -304,18 +304,53 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         pull_sync_prune_artifacts.assert_called_once()
         execute_remote_command_over_ssh.assert_not_called()
 
-    def test_full_stage_command_runs_postprocess_selection_before_final_eval(self) -> None:
-        command = vast_ai_training_runner.build_stage_command("full", "/workspace/mirip_v2")
+    def test_build_pairs_stage_command_uses_legacy_aligned_targets(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("build-pairs-legacy-aligned", "/workspace/mirip_v2")
 
-        self.assertIn("--learning-rate 3e-5", command)
-        self.assertIn("--backbone-learning-rate-scale 0.2", command)
-        self.assertIn("--unfreeze-last-n-layers 2", command)
-        self.assertIn("--early-stopping-metric anchor_tier_accuracy", command)
+        self.assertIn("--train-ratio 0.8", command)
+        self.assertIn("--val-ratio 0.1", command)
+        self.assertIn("--train-pairs-target 40000", command)
+        self.assertIn("--val-pairs-target 5000", command)
+        self.assertIn("--max-appearances 48", command)
+        self.assertIn("--distance1-ratio 0.6", command)
+        self.assertIn("prepare_snapshot.py", command)
+        self.assertIn("build_pairs.py", command)
+
+    def test_ablation_stage_command_runs_probe_and_three_variants(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("ablation", "/workspace/mirip_v2")
+
+        self.assertIn("probe_dinov3_batch_size.py", command)
+        self.assertIn("--batch-size-candidates 8,6,4,2", command)
+        self.assertIn("ablation/A", command)
+        self.assertIn("ablation/B", command)
+        self.assertIn("ablation/C", command)
+        self.assertIn("--head-type linear", command)
+        self.assertIn("--head-type mlp_small", command)
+        self.assertIn("--epochs 5", command)
+        self.assertIn("--warmup-epochs 1", command)
+        self.assertIn("--freeze-backbone", command)
+
+    def test_select_ablation_winner_stage_reads_variant_registries(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("select-ablation-winner", "/workspace/mirip_v2")
+
+        self.assertIn("select_ablation_winner.py", command)
+        self.assertIn("--candidate A=output_models/logs/dinov3_vit7b16_ablation_A_registry.json", command)
+        self.assertIn("--candidate B=output_models/logs/dinov3_vit7b16_ablation_B_registry.json", command)
+        self.assertIn("--candidate C=output_models/logs/dinov3_vit7b16_ablation_C_registry.json", command)
+        self.assertIn("dinov3_vit7b16_ablation_summary.json", command)
+
+    def test_full_fresh_stage_uses_ablation_winner_without_resume(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("full-fresh", "/workspace/mirip_v2")
+
+        self.assertIn("winner_config", command)
+        self.assertIn("probe_dinov3_batch_size.py", command)
+        self.assertIn("output_models/archive", command)
+        self.assertIn("--epochs 30", command)
+        self.assertIn("--warmup-epochs 2", command)
+        self.assertIn("--feature-pool cls_mean_patch_concat", command)
+        self.assertIn("--freeze-backbone", command)
         self.assertIn("--postprocess-registry output_models/logs/dinov3_vit7b16_postprocess_registry.json", command)
-        self.assertIn("--postprocess-report output_models/logs/dinov3_vit7b16_full_candidate.json", command)
-        self.assertIn("--postprocess-best-checkpoint output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt", command)
-        self.assertIn("--postprocess-best-report output_models/logs/dinov3_vit7b16_smoke.json", command)
-        self.assertIn("dinov3_vit7b16_postprocess_registry.json", command)
+        self.assertNotIn("--resume-from", command)
         self.assertIn("dinov3_vit7b16_full.json", command)
 
 

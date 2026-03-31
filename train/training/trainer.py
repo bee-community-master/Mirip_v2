@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import torch
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.data import DataLoader
 
 try:
@@ -45,11 +45,7 @@ class DinoV3Trainer:
 
         optimizer_groups = self._build_optimizer_groups()
         self.optimizer = AdamW(optimizer_groups, weight_decay=config.weight_decay)
-        self.scheduler = CosineAnnealingLR(
-            self.optimizer,
-            T_max=config.max_epochs,
-            eta_min=config.scheduler_eta_min,
-        )
+        self.scheduler = self._build_scheduler()
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16" and self.device.type == "cuda")
         self.best_val_loss = math.inf
         self.best_selection_metric: float | None = None
@@ -103,6 +99,31 @@ class DinoV3Trainer:
         if not optimizer_groups:
             raise RuntimeError("No trainable parameters were found for optimization.")
         return optimizer_groups
+
+    def _build_scheduler(self):
+        if self.config.warmup_epochs > 0:
+            warmup_scheduler = LinearLR(
+                self.optimizer,
+                start_factor=max(1.0 / max(self.config.warmup_epochs, 1), 1e-3),
+                end_factor=1.0,
+                total_iters=self.config.warmup_epochs,
+            )
+            cosine_epochs = max(self.config.max_epochs - self.config.warmup_epochs, 1)
+            cosine_scheduler = CosineAnnealingLR(
+                self.optimizer,
+                T_max=cosine_epochs,
+                eta_min=self.config.scheduler_eta_min,
+            )
+            return SequentialLR(
+                self.optimizer,
+                schedulers=[warmup_scheduler, cosine_scheduler],
+                milestones=[self.config.warmup_epochs],
+            )
+        return CosineAnnealingLR(
+            self.optimizer,
+            T_max=max(self.config.max_epochs, 1),
+            eta_min=self.config.scheduler_eta_min,
+        )
 
     def _autocast(self):
         if self.device.type != "cuda" or self.precision == "fp32":

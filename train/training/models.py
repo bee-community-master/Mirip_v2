@@ -28,6 +28,7 @@ class DinoV3FeatureExtractor(nn.Module):
         freeze_backbone: bool = True,
         backbone_dtype: str = "auto",
         unfreeze_last_n_layers: int = 0,
+        feature_pool: str = "cls_mean_patch_concat",
     ) -> None:
         super().__init__()
         self.model_name = model_name
@@ -35,6 +36,7 @@ class DinoV3FeatureExtractor(nn.Module):
         self.freeze_backbone = freeze_backbone
         self.backbone_dtype = backbone_dtype
         self.unfreeze_last_n_layers = unfreeze_last_n_layers
+        self.feature_pool = feature_pool
         resolved_dtype = resolve_backbone_dtype(backbone_dtype)
         model_kwargs: dict[str, object] = {
             "low_cpu_mem_usage": True,
@@ -42,7 +44,8 @@ class DinoV3FeatureExtractor(nn.Module):
         if resolved_dtype is not None:
             model_kwargs["torch_dtype"] = resolved_dtype
         self.model = AutoModel.from_pretrained(model_name, **model_kwargs)
-        self.output_dim = int(self.model.config.hidden_size)
+        hidden_size = int(self.model.config.hidden_size)
+        self.output_dim = hidden_size * 2 if feature_pool == "cls_mean_patch_concat" else hidden_size
         if freeze_backbone:
             for param in self.model.parameters():
                 param.requires_grad = False
@@ -109,6 +112,21 @@ class DinoV3FeatureExtractor(nn.Module):
                 norm.train(mode)
         return self
 
+    def _pool_last_hidden_state(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
+        cls_features = last_hidden_state[:, 0, :]
+        if self.feature_pool == "cls":
+            return F.normalize(cls_features, p=2, dim=1) if self.normalize else cls_features
+        if self.feature_pool == "cls_mean_patch_concat":
+            if last_hidden_state.shape[1] > 1:
+                patch_features = last_hidden_state[:, 1:, :].mean(dim=1)
+            else:
+                patch_features = cls_features
+            if self.normalize:
+                cls_features = F.normalize(cls_features, p=2, dim=1)
+                patch_features = F.normalize(patch_features, p=2, dim=1)
+            return torch.cat((cls_features, patch_features), dim=1)
+        raise ValueError(f"Unsupported feature_pool: {self.feature_pool}")
+
     def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
         if self.freeze_backbone:
             self.model.eval()
@@ -120,10 +138,20 @@ class DinoV3FeatureExtractor(nn.Module):
         last_hidden_state = getattr(outputs, "last_hidden_state", None)
         if last_hidden_state is None:
             raise RuntimeError("AutoModel output missing last_hidden_state")
-        features = last_hidden_state[:, 0, :]
-        if self.normalize:
-            features = F.normalize(features, p=2, dim=1)
-        return features
+        return self._pool_last_hidden_state(last_hidden_state)
+
+
+def resolve_pairwise_model_kwargs(config_dict: dict[str, object]) -> dict[str, object]:
+    return {
+        "model_name": str(config_dict["model_name"]),
+        "dropout": float(config_dict.get("dropout", 0.1)),
+        "margin": float(config_dict.get("margin", 0.3)),
+        "freeze_backbone": bool(config_dict.get("freeze_backbone", True)),
+        "backbone_dtype": str(config_dict.get("backbone_dtype", "auto")),
+        "unfreeze_last_n_layers": int(config_dict.get("unfreeze_last_n_layers", 0)),
+        "feature_pool": str(config_dict.get("feature_pool", "cls_mean_patch_concat")),
+        "head_type": str(config_dict.get("head_type", "mlp_small")),
+    }
 
 
 class DinoV3PairwiseModel(nn.Module):
@@ -132,44 +160,48 @@ class DinoV3PairwiseModel(nn.Module):
         model_name: str,
         projector_hidden_dim: int = 512,
         projector_output_dim: int = 256,
-        dropout: float = 0.3,
+        dropout: float = 0.1,
         margin: float = 0.3,
         freeze_backbone: bool = True,
         backbone_dtype: str = "auto",
         unfreeze_last_n_layers: int = 0,
+        feature_pool: str = "cls_mean_patch_concat",
+        head_type: str = "mlp_small",
     ) -> None:
         super().__init__()
         self.model_name = model_name
         self.margin = margin
+        self.head_type = head_type
         self.feature_extractor = DinoV3FeatureExtractor(
             model_name=model_name,
             normalize=True,
             freeze_backbone=freeze_backbone,
             backbone_dtype=backbone_dtype,
             unfreeze_last_n_layers=unfreeze_last_n_layers,
+            feature_pool=feature_pool,
         )
         feature_dim = self.feature_extractor.output_dim
-        self.projector = nn.Sequential(
-            nn.Linear(feature_dim, projector_hidden_dim),
-            nn.LayerNorm(projector_hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(projector_hidden_dim, projector_output_dim),
-            nn.LayerNorm(projector_output_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-        self.score_head = nn.Sequential(
-            nn.Linear(projector_output_dim, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
-        )
+        self.projector = nn.Identity()
+        if head_type == "linear":
+            self.score_head = nn.Sequential(
+                nn.LayerNorm(feature_dim),
+                nn.Linear(feature_dim, 1),
+            )
+        elif head_type == "mlp_small":
+            self.score_head = nn.Sequential(
+                nn.LayerNorm(feature_dim),
+                nn.Linear(feature_dim, 1024),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(1024, 1),
+            )
+        else:
+            raise ValueError(f"Unsupported head_type: {head_type}")
         self.loss_fn = nn.MarginRankingLoss(margin=margin)
         self._init_weights()
 
     def _init_weights(self) -> None:
-        for module in list(self.projector.modules()) + list(self.score_head.modules()):
+        for module in list(self.score_head.modules()):
             if isinstance(module, nn.Linear):
                 nn.init.xavier_uniform_(module.weight)
                 if module.bias is not None:
@@ -180,7 +212,9 @@ class DinoV3PairwiseModel(nn.Module):
 
     @staticmethod
     def _align_tensor_for_module(tensor: torch.Tensor, module: nn.Module) -> torch.Tensor:
-        parameter = next(module.parameters())
+        parameter = next(module.parameters(), None)
+        if parameter is None:
+            return tensor
         if tensor.device != parameter.device:
             tensor = tensor.to(parameter.device)
         if not torch.is_autocast_enabled() and tensor.dtype != parameter.dtype:

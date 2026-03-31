@@ -11,7 +11,7 @@ from .anchors import build_anchor_store, evaluate_anchor_tier_accuracy
 from .config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig
 from .datasets import DinoPairBatchCollator, DinoPairDataset
 from .evaluation import evaluate_pairwise
-from .models import DinoV3PairwiseModel
+from .models import DinoV3PairwiseModel, resolve_pairwise_model_kwargs
 from .postprocess_registry import update_postprocess_registry
 from .utils import project_relative_path, resolve_project_path
 
@@ -28,15 +28,7 @@ def load_checkpoint_model(
     checkpoint = torch.load(resolved_checkpoint, map_location=map_location)
     config_dict = checkpoint.get("config", DinoV3TrainingConfig().to_dict())
     model_name = _resolve_model_name(config_dict)
-    model = DinoV3PairwiseModel(
-        model_name=model_name,
-        projector_hidden_dim=int(config_dict.get("projector_hidden_dim", 512)),
-        projector_output_dim=int(config_dict.get("projector_output_dim", 256)),
-        dropout=float(config_dict.get("dropout", 0.3)),
-        margin=float(config_dict.get("margin", 0.3)),
-        freeze_backbone=True,
-        backbone_dtype=str(config_dict.get("backbone_dtype", "auto")),
-    )
+    model = DinoV3PairwiseModel(**resolve_pairwise_model_kwargs({"model_name": model_name, **config_dict}))
     model.load_state_dict(checkpoint["model_state_dict"])
     return checkpoint, config_dict, model
 
@@ -46,13 +38,19 @@ def _build_evaluation_loader(
     pairs_val: str | Path,
     image_root: str | Path,
     model_name: str,
+    input_size: int,
     batch_size: int,
     num_workers: int,
     prefetch_factor: int,
     persistent_workers: bool,
 ) -> DataLoader:
     dataset = DinoPairDataset(pairs_csv=pairs_val)
-    collator = DinoPairBatchCollator(image_root=image_root, model_name=model_name)
+    collator = DinoPairBatchCollator(
+        image_root=image_root,
+        model_name=model_name,
+        input_size=input_size,
+        is_train=False,
+    )
     loader_kwargs = {
         "batch_size": batch_size,
         "shuffle": False,
@@ -119,18 +117,21 @@ def run_postprocess_for_checkpoint(
     assert runtime_model is not None
     assert runtime_config is not None
     model_name = _resolve_model_name(runtime_config)
+    input_size = int(runtime_config.get("input_size", 448))
 
     anchors = build_anchor_store(
         model=runtime_model,
         metadata_csv=metadata_train,
         image_root=image_root,
         model_name=model_name,
+        input_size=input_size,
     )
     anchors_output_path = anchors.save(anchors_output)
     loader = _build_evaluation_loader(
         pairs_val=pairs_val,
         image_root=image_root,
         model_name=model_name,
+        input_size=input_size,
         batch_size=batch_size,
         num_workers=num_workers,
         prefetch_factor=prefetch_factor,
@@ -142,12 +143,13 @@ def run_postprocess_for_checkpoint(
         evaluate_anchor_tier_accuracy(
             model=runtime_model,
             anchors=anchors,
-            metadata_csv=metadata_eval,
-            image_root=image_root,
-            model_name=model_name,
-            precision=precision,
+                metadata_csv=metadata_eval,
+                image_root=image_root,
+                model_name=model_name,
+                input_size=input_size,
+                precision=precision,
+            )
         )
-    )
 
     payload = _build_postprocess_payload(
         checkpoint_path=checkpoint_path,

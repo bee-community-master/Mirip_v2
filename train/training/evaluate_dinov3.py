@@ -50,6 +50,8 @@ def main() -> int:
     collator = DinoPairBatchCollator(
         image_root=args.image_root,
         model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
+        input_size=int(config_dict.get("input_size", 448)),
+        is_train=False,
     )
     loader_kwargs = {
         "batch_size": args.batch_size,
@@ -74,6 +76,7 @@ def main() -> int:
                 metadata_csv=args.metadata_eval,
                 image_root=args.image_root,
                 model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
+                input_size=int(config_dict.get("input_size", 448)),
                 precision=args.precision,
             )
         )

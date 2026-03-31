@@ -12,4 +12,11 @@
   3. `python3 train/training/build_pairs.py`
   4. `python3 train/training/validate_training_readiness.py --mode prepared`
 
-`build_pairs.py`는 기본 설정 기준 목표 pair 수를 끝까지 채우지 못하면 실패한다. 현재 launch 기준 pair 정책은 `max_appearances=30`이며, freeze 이후 `train/data`가 바뀌면 raw validator부터 다시 수행해야 한다.
+`build_pairs.py`는 기본 설정 기준 목표 pair 수를 끝까지 채우지 못하면 실패한다. freeze 이후 `train/data`가 바뀌면 raw validator부터 다시 수행해야 한다.
+현재 reboot 기준 기본 정책은 아래와 같다.
+
+- split: `train=0.8`, `val=0.1`, `test=0.1`
+- pairs: `train=40000`, `val=5000`
+- same/cross dept ratio: `0.5 / 0.5`
+- tier distance quota: `distance1=0.6`, `distance2=0.3`, `distance3=0.1`
+- max appearances: `48`

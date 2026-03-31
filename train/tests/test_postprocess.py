@@ -81,6 +81,7 @@ class PostprocessTests(unittest.TestCase):
                 metadata_csv="training/data/metadata_train.csv",
                 image_root="data",
                 model_name="dummy-model",
+                input_size=448,
             )
             build_loader.assert_called_once()
             evaluate_pairwise.assert_called_once()
