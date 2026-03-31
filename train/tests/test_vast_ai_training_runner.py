@@ -39,8 +39,9 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
         self.assertIn("checkpoint_epoch_0002.pt", command)
         self.assertIn("checkpoint_epoch_0005.pt", command)
-        self.assertIn("output_models/checkpoints/dinov3_vit7b16", command)
-        self.assertIn("checkpoints/dinov3_vit7b16", command)
+        self.assertIn("output_models/checkpoints/dinov3_vit7b16/full", command)
+        self.assertIn("checkpoints/dinov3_vit7b16/full", command)
+        self.assertNotIn("output_models/checkpoints/dinov3_vit7b16/ablation", command)
         self.assertIn("best_model.pt", command)
         self.assertIn("REGISTRY_CANDIDATE_EPOCH=9", command)
         self.assertIn("LATEST_REMOTE_EPOCH", command)
