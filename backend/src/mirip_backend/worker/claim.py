@@ -16,3 +16,7 @@ def build_worker_id() -> str:
 
 async def claim_next_job(queue: JobQueueService, worker_id: str) -> DiagnosisJob | None:
     return await queue.lease_next(worker_id=worker_id)
+
+
+async def claim_job(queue: JobQueueService, worker_id: str, job_id: str) -> DiagnosisJob | None:
+    return await queue.lease_job(job_id, worker_id=worker_id)

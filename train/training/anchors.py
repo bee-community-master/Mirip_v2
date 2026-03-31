@@ -9,7 +9,7 @@ import torch
 
 from .datasets import load_metadata_rows, preprocess_rgb_image, resolve_image_path, load_rgb_image
 from .trainer import resolve_precision
-from .utils import resolve_project_path
+from .utils import project_relative_path, resolve_model_source, resolve_project_path
 
 
 class AnchorStore:
@@ -48,6 +48,7 @@ def build_anchor_store(
     input_size: int,
     n_per_tier: int = 10,
     seed: int = 42,
+    source_checkpoint: str | Path | None = None,
 ) -> AnchorStore:
     rows = load_metadata_rows(metadata_csv)
     grouped: dict[str, list[dict[str, str]]] = defaultdict(list)
@@ -89,8 +90,13 @@ def build_anchor_store(
         metadata={
             "n_per_tier": n_per_tier,
             "model_name": model_name,
+            "model_source": resolve_model_source(model_name),
             "seed": seed,
             "metadata_csv": str(metadata_csv),
+            "checkpoint": str(resolve_project_path(source_checkpoint)) if source_checkpoint else None,
+            "checkpoint_relative": project_relative_path(source_checkpoint) if source_checkpoint else None,
+            "feature_dim": getattr(getattr(model, "feature_extractor", None), "output_dim", None),
+            "projector_output_dim": getattr(getattr(model, "score_head", [None])[0], "in_features", None),
         },
     )
 

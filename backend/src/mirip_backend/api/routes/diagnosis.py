@@ -14,6 +14,7 @@ from mirip_backend.api.schemas.diagnosis import (
     DiagnosisResultResponse,
 )
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob, DiagnosisResult
+from mirip_backend.shared.exceptions import DependencyError
 from mirip_backend.usecases.diagnosis.create_job import (
     CreateDiagnosisJobCommand,
     CreateDiagnosisJobUseCase,
@@ -57,9 +58,15 @@ async def create_job(
     current_user: CurrentUserDep,
     container: ContainerDep,
 ) -> DiagnosisJobResponse:
+    if container.settings.worker.mode == "stub":
+        raise DependencyError("Diagnosis model is not ready yet")
+
     usecase = CreateDiagnosisJobUseCase(
         upload_repository=container.upload_repository,
         job_repository=container.diagnosis_job_repository,
+        vm_launcher=container.compute_launcher,
+        worker_model_uri=container.settings.worker.model_uri,
+        worker_mode=container.settings.worker.mode,
     )
     job = await usecase.execute(
         actor=current_user,

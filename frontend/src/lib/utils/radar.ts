@@ -1,4 +1,4 @@
-import type { DiagnosisRadarPoint } from '$lib/types';
+import type { DiagnosisRadarPoint } from '$lib/diagnosis/types';
 
 interface RadarGeometryOptions {
 	size?: number;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DiagnosisRadarPoint } from '$lib/types';
+	import type { DiagnosisRadarPoint } from '$lib/diagnosis/types';
 	import { getRadarGeometry } from '$lib/utils/radar';
 
 	let {

@@ -18,7 +18,7 @@ from training.datasets import DinoPairBatchCollator, DinoPairDataset
 from training.models import DinoV3PairwiseModel
 from training.postprocess import run_postprocess_for_checkpoint
 from training.trainer import DinoV3Trainer
-from training.utils import project_relative_path, resolve_project_path, set_seed
+from training.utils import project_relative_path, resolve_model_source, resolve_project_path, set_seed
 
 POSTPROCESS_ARG_NAMES = (
     "postprocess_metadata_train",
@@ -119,9 +119,15 @@ def main() -> int:
     set_seed(args.seed)
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
+    requested_model_name = args.model_name
+    try:
+        resolved_model_name = resolve_model_source(requested_model_name)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    args.model_name = resolved_model_name
 
     config = DinoV3TrainingConfig(
-        model_name=args.model_name,
+        model_name=resolved_model_name,
         backbone_dtype=args.backbone_dtype,
         learning_rate=args.learning_rate,
         backbone_learning_rate_scale=args.backbone_learning_rate_scale,
@@ -248,6 +254,11 @@ def main() -> int:
             "latest_completed_checkpoint_relative": project_relative_path(summary["latest_completed_checkpoint"])
             if summary.get("latest_completed_checkpoint")
             else None,
+        },
+        "model_source": {
+            "requested": requested_model_name,
+            "resolved": resolved_model_name,
+            "is_local_export": resolved_model_name != requested_model_name,
         },
     }
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

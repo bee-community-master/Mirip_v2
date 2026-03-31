@@ -56,6 +56,7 @@ def main() -> int:
         input_size=int(config_dict.get("input_size", 448)),
         n_per_tier=args.n_per_tier,
         seed=args.seed,
+        source_checkpoint=args.checkpoint,
     )
     output_path = anchors.save(args.output)
     payload = {

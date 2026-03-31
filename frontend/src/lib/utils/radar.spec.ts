@@ -1,18 +1,24 @@
 import { describe, expect, it } from 'vitest';
-import { diagnosisMock } from '$lib/mocks/diagnosis';
 import { getRadarGeometry } from '$lib/utils/radar';
+
+const radarFixture = [
+	{ subject: '구성력', score: 79, fullMark: 100 },
+	{ subject: '표현력', score: 74, fullMark: 100 },
+	{ subject: '창의성', score: 73, fullMark: 100 },
+	{ subject: '완성도', score: 83, fullMark: 100 }
+];
 
 describe('getRadarGeometry', () => {
 	it('builds one point and one axis for each radar datum', () => {
-		const geometry = getRadarGeometry(diagnosisMock.radar);
+		const geometry = getRadarGeometry(radarFixture);
 
-		expect(geometry.points).toHaveLength(diagnosisMock.radar.length);
-		expect(geometry.axes).toHaveLength(diagnosisMock.radar.length);
+		expect(geometry.points).toHaveLength(radarFixture.length);
+		expect(geometry.axes).toHaveLength(radarFixture.length);
 		expect(geometry.rings).toHaveLength(4);
 	});
 
 	it('keeps plotted points inside the viewport bounds', () => {
-		const geometry = getRadarGeometry(diagnosisMock.radar, { size: 320 });
+		const geometry = getRadarGeometry(radarFixture, { size: 320 });
 
 		expect(
 			geometry.points.every(

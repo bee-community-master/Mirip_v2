@@ -125,6 +125,7 @@ def run_postprocess_for_checkpoint(
         image_root=image_root,
         model_name=model_name,
         input_size=input_size,
+        source_checkpoint=checkpoint_path,
     )
     anchors_output_path = anchors.save(anchors_output)
     loader = _build_evaluation_loader(
@@ -143,13 +144,13 @@ def run_postprocess_for_checkpoint(
         evaluate_anchor_tier_accuracy(
             model=runtime_model,
             anchors=anchors,
-                metadata_csv=metadata_eval,
-                image_root=image_root,
-                model_name=model_name,
-                input_size=input_size,
-                precision=precision,
-            )
+            metadata_csv=metadata_eval,
+            image_root=image_root,
+            model_name=model_name,
+            input_size=input_size,
+            precision=precision,
         )
+    )
 
     payload = _build_postprocess_payload(
         checkpoint_path=checkpoint_path,
