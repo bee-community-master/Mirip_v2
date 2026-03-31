@@ -37,21 +37,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model-name", default=DEFAULT_DINOV3_MODEL_NAME)
     parser.add_argument("--backbone-dtype", default="auto", choices=["auto", "bf16", "fp16", "fp32"])
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--warmup-epochs", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=8)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
-    parser.add_argument("--weight-decay", type=float, default=0.05)
-    parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--weight-decay", type=float, default=1e-4)
+    parser.add_argument("--backbone-learning-rate-scale", type=float, default=0.2)
+    parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--margin", type=float, default=0.3)
+    parser.add_argument("--input-size", type=int, default=448)
+    parser.add_argument("--feature-pool", default="cls_mean_patch_concat", choices=["cls", "cls_mean_patch_concat"])
+    parser.add_argument("--head-type", default="mlp_small", choices=["linear", "mlp_small"])
+    parser.add_argument("--freeze-backbone", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--unfreeze-last-n-layers", type=int, default=0)
     parser.add_argument("--num-workers", type=int, default=default_num_workers())
     parser.add_argument("--prefetch-factor", type=int, default=4)
     parser.add_argument("--no-persistent-workers", action="store_true")
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=8)
+    parser.add_argument("--early-stopping-metric", default="anchor_tier_accuracy", choices=["val_loss", "anchor_tier_accuracy"])
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--precision", default="auto", choices=["auto", "bf16", "fp16", "fp32"])
+    parser.add_argument("--precision", default="bf16", choices=["auto", "bf16", "fp16", "fp32"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume-from")
+    parser.add_argument("--resume-next-epoch", action="store_true")
+    parser.add_argument("--reset-training-state-on-resume", action="store_true")
     parser.add_argument("--wandb-project", default="mirip-v2-dinov3")
     parser.add_argument("--wandb-run-name")
     parser.add_argument("--wandb", action="store_true")
@@ -61,6 +71,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--postprocess-anchors-output")
     parser.add_argument("--postprocess-report")
     parser.add_argument("--postprocess-registry")
+    parser.add_argument("--postprocess-best-checkpoint")
+    parser.add_argument("--postprocess-best-report")
     return parser.parse_args()
 
 
@@ -78,6 +90,11 @@ def resolve_postprocess_kwargs(
         )
     if not provided_names:
         return None
+    if bool(args.postprocess_best_checkpoint) != bool(args.postprocess_best_report):
+        raise SystemExit(
+            "Postprocess incumbent arguments must be provided together. "
+            "Missing one of: postprocess_best_checkpoint, postprocess_best_report"
+        )
     return {
         "pairs_val": args.pairs_val,
         "metadata_train": args.postprocess_metadata_train,
@@ -86,6 +103,8 @@ def resolve_postprocess_kwargs(
         "anchors_output": args.postprocess_anchors_output,
         "report_output": args.postprocess_report,
         "registry_output": args.postprocess_registry,
+        "best_checkpoint": args.postprocess_best_checkpoint,
+        "best_report": args.postprocess_best_report,
         "batch_size": config.batch_size,
         "num_workers": config.num_workers,
         "prefetch_factor": config.prefetch_factor,
@@ -111,11 +130,14 @@ def main() -> int:
         model_name=resolved_model_name,
         backbone_dtype=args.backbone_dtype,
         learning_rate=args.learning_rate,
+        backbone_learning_rate_scale=args.backbone_learning_rate_scale,
         weight_decay=args.weight_decay,
         batch_size=args.batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         max_epochs=args.epochs,
+        warmup_epochs=args.warmup_epochs,
         early_stopping_patience=args.patience,
+        early_stopping_metric=args.early_stopping_metric,
         checkpoint_dir=args.output_dir,
         num_workers=args.num_workers,
         persistent_workers=not args.no_persistent_workers,
@@ -123,6 +145,11 @@ def main() -> int:
         device=args.device,
         precision=args.precision,
         seed=args.seed,
+        input_size=args.input_size,
+        feature_pool=args.feature_pool,
+        head_type=args.head_type,
+        freeze_backbone=args.freeze_backbone,
+        unfreeze_last_n_layers=args.unfreeze_last_n_layers,
         dropout=args.dropout,
         margin=args.margin,
         wandb_enabled=args.wandb,
@@ -136,8 +163,18 @@ def main() -> int:
     val_dataset = DinoPairDataset(
         pairs_csv=args.pairs_val,
     )
-    train_collator = DinoPairBatchCollator(image_root=args.image_root, model_name=args.model_name)
-    val_collator = DinoPairBatchCollator(image_root=args.image_root, model_name=args.model_name)
+    train_collator = DinoPairBatchCollator(
+        image_root=args.image_root,
+        model_name=args.model_name,
+        input_size=config.input_size,
+        is_train=True,
+    )
+    val_collator = DinoPairBatchCollator(
+        image_root=args.image_root,
+        model_name=args.model_name,
+        input_size=config.input_size,
+        is_train=False,
+    )
     loader_kwargs = {
         "batch_size": config.batch_size,
         "num_workers": config.num_workers,
@@ -165,18 +202,37 @@ def main() -> int:
         model_name=config.model_name,
         projector_hidden_dim=config.projector_hidden_dim,
         projector_output_dim=config.projector_output_dim,
+        unfreeze_last_n_layers=args.unfreeze_last_n_layers,
         dropout=config.dropout,
         margin=config.margin,
-        freeze_backbone=True,
+        feature_pool=config.feature_pool,
+        head_type=config.head_type,
+        freeze_backbone=config.freeze_backbone,
         backbone_dtype=config.backbone_dtype,
     )
-    trainer = DinoV3Trainer(model=model, config=config, resume_from=args.resume_from)
+    trainer = DinoV3Trainer(
+        model=model,
+        config=config,
+        resume_from=args.resume_from,
+        resume_next_epoch=args.resume_next_epoch,
+        reset_training_state_on_resume=args.reset_training_state_on_resume,
+    )
     postprocess_kwargs = resolve_postprocess_kwargs(args, config)
 
-    def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> None:
+    def postprocess_callback(checkpoint_path: Path, _metrics: dict[str, Any]) -> dict[str, Any] | None:
         if postprocess_kwargs is None:
             return
-        run_postprocess_for_checkpoint(checkpoint_path=checkpoint_path, **postprocess_kwargs)
+        if trainer.device.type == "cuda":
+            torch.cuda.empty_cache()
+        result = run_postprocess_for_checkpoint(
+            checkpoint_path=checkpoint_path,
+            model=trainer.model,
+            config_dict=config.to_dict(),
+            **postprocess_kwargs,
+        )
+        if trainer.device.type == "cuda":
+            torch.cuda.empty_cache()
+        return result
 
     summary = trainer.train(
         train_loader,

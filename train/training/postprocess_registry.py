@@ -126,25 +126,22 @@ def load_existing_best(
     best_checkpoint: str | Path | None = None,
     best_report: str | Path | None = None,
 ) -> PostprocessRecord | None:
+    registry_file = resolve_project_path(registry_path)
+    if registry_file.exists():
+        payload = read_json(registry_file)
+        checkpoint_relative = payload.get("selected_best_checkpoint_after_compare")
+        report_relative = payload.get("selected_best_report_after_compare")
+        metrics = payload.get("selected_best_metrics_after_compare")
+        if checkpoint_relative and report_relative and isinstance(metrics, dict):
+            return PostprocessRecord(
+                checkpoint_relative=checkpoint_relative,
+                report_relative=report_relative,
+                metrics=metrics,
+            )
+
     if best_report:
         return load_report_record(best_checkpoint, best_report)
-
-    registry_file = resolve_project_path(registry_path)
-    if not registry_file.exists():
-        return None
-
-    payload = read_json(registry_file)
-    checkpoint_relative = payload.get("selected_best_checkpoint_after_compare")
-    report_relative = payload.get("selected_best_report_after_compare")
-    metrics = payload.get("selected_best_metrics_after_compare")
-    if not checkpoint_relative or not report_relative or not isinstance(metrics, dict):
-        return None
-
-    return PostprocessRecord(
-        checkpoint_relative=checkpoint_relative,
-        report_relative=report_relative,
-        metrics=metrics,
-    )
+    return None
 
 
 def choose_best_record(
@@ -200,6 +197,9 @@ def build_registry_payload(
     decision: dict[str, Any],
 ) -> dict[str, Any]:
     compared_at = datetime.now(timezone.utc).isoformat()
+    retained_checkpoints = [selected.checkpoint_relative]
+    if candidate.checkpoint_relative != selected.checkpoint_relative:
+        retained_checkpoints.append(candidate.checkpoint_relative)
     return {
         "registry_version": 1,
         "selection_policy": [
@@ -219,7 +219,7 @@ def build_registry_payload(
         "selected_best_checkpoint_after_compare": selected.checkpoint_relative,
         "selected_best_report_after_compare": selected.report_relative,
         "selected_best_metrics_after_compare": selected.metric_snapshot,
-        "retained_checkpoints": [selected.checkpoint_relative],
+        "retained_checkpoints": retained_checkpoints,
         "decision": decision,
     }
 

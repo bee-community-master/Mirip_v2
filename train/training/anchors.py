@@ -6,10 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from PIL import Image
-from transformers import AutoImageProcessor
 
-from .datasets import load_metadata_rows, resolve_image_path
+from .datasets import load_metadata_rows, preprocess_rgb_image, resolve_image_path, load_rgb_image
 from .trainer import resolve_precision
 from .utils import project_relative_path, resolve_model_source, resolve_project_path
 
@@ -42,16 +40,12 @@ class AnchorStore:
             metadata=payload.get("metadata", {}),
         )
 
-
-def _load_processor(model_name: str):
-    return AutoImageProcessor.from_pretrained(model_name)
-
-
 def build_anchor_store(
     model: torch.nn.Module,
     metadata_csv: str | Path,
     image_root: str | Path,
     model_name: str,
+    input_size: int,
     n_per_tier: int = 10,
     seed: int = 42,
     source_checkpoint: str | Path | None = None,
@@ -61,7 +55,6 @@ def build_anchor_store(
     for row in rows:
         grouped[row["tier"]].append(row)
 
-    processor = _load_processor(model_name)
     rng = random.Random(seed)
     device = next(model.parameters()).device
     features: dict[str, torch.Tensor] = {}
@@ -78,8 +71,12 @@ def build_anchor_store(
             tier_paths = []
             for row in selected:
                 path = resolve_image_path(image_root, row["image_path"])
-                image = Image.open(path).convert("RGB")
-                pixel_values = processor(images=image, return_tensors="pt")["pixel_values"].to(device)
+                pixel_values = preprocess_rgb_image(
+                    load_rgb_image(path),
+                    model_name=model_name,
+                    input_size=input_size,
+                    is_train=False,
+                ).unsqueeze(0).to(device)
                 projected = model.project_features(model.extract_features(pixel_values))
                 tier_features.append(projected.squeeze(0).cpu())
                 tier_paths.append(row["image_path"])
@@ -157,10 +154,10 @@ def evaluate_anchor_tier_accuracy(
     metadata_csv: str | Path,
     image_root: str | Path,
     model_name: str,
+    input_size: int,
     precision: str = "auto",
 ) -> dict[str, Any]:
     rows = load_metadata_rows(metadata_csv)
-    processor = _load_processor(model_name)
     device = next(model.parameters()).device
     resolved_precision = resolve_precision(precision, "cuda" if device.type == "cuda" else "cpu")
     ranker = TierRanker(model, anchors)
@@ -174,8 +171,12 @@ def evaluate_anchor_tier_accuracy(
         for row in rows:
             true_tier = row["tier"]
             path = resolve_image_path(image_root, row["image_path"])
-            image = Image.open(path).convert("RGB")
-            pixel_values = processor(images=image, return_tensors="pt")["pixel_values"].to(device)
+            pixel_values = preprocess_rgb_image(
+                load_rgb_image(path),
+                model_name=model_name,
+                input_size=input_size,
+                is_train=False,
+            ).unsqueeze(0).to(device)
             with _evaluation_autocast(device, resolved_precision):
                 projected = model.project_features(model.extract_features(pixel_values))
             result = ranker.rank_projected_feature(projected)

@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metadata-dir", default="data/metadata")
     parser.add_argument("--image-root", default="data")
     parser.add_argument("--output-manifest", default="training/data/snapshot_manifest.csv")
-    parser.add_argument("--report", default="reports/snapshot_report.json")
+    parser.add_argument("--report", default="output_models/logs/snapshot_report.json")
     parser.add_argument("--min-group-size", type=int, default=15)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()

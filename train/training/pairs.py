@@ -2,15 +2,27 @@ from __future__ import annotations
 
 import random
 from collections import Counter, defaultdict
+from math import floor
 from typing import Any
 
 from .utils import load_rows_from_csv, write_json, write_rows_to_csv
+
+TIER_ORDER = {
+    "S": 0,
+    "A": 1,
+    "B": 2,
+    "C": 3,
+}
 
 
 class PairGenerationError(RuntimeError):
     def __init__(self, message: str, stats: dict[str, Any]) -> None:
         super().__init__(message)
         self.stats = stats
+
+
+PAIR_TYPES: tuple[str, str] = ("same_dept", "cross_dept")
+DISTANCE_BUCKETS: tuple[int, int, int] = (1, 2, 3)
 
 
 def _row_to_item(row: dict[str, str]) -> dict[str, Any]:
@@ -52,6 +64,14 @@ def _compute_quality_tier(high: dict[str, Any], low: dict[str, Any]) -> int:
     return 1
 
 
+def _tier_distance(first: dict[str, Any], second: dict[str, Any]) -> int:
+    first_rank = TIER_ORDER.get(first["tier"])
+    second_rank = TIER_ORDER.get(second["tier"])
+    if first_rank is None or second_rank is None:
+        return 99
+    return abs(first_rank - second_rank)
+
+
 def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: float) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in items:
@@ -77,10 +97,13 @@ def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: f
                     {
                         "image_path_1": high["image_path"],
                         "image_path_2": low["image_path"],
+                        "tier_1": high["tier"],
+                        "tier_2": low["tier"],
                         "label": 1,
                         "tier_score_1": high["tier_score"],
                         "tier_score_2": low["tier_score"],
                         "score_gap": round(gap, 4),
+                        "tier_distance": _tier_distance(high, low),
                         "pair_type": "same_dept",
                         "dept": dept,
                         "quality_tier": quality,
@@ -92,10 +115,13 @@ def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: f
                     {
                         "image_path_1": low["image_path"],
                         "image_path_2": high["image_path"],
+                        "tier_1": low["tier"],
+                        "tier_2": high["tier"],
                         "label": -1,
                         "tier_score_1": low["tier_score"],
                         "tier_score_2": high["tier_score"],
                         "score_gap": round(gap, 4),
+                        "tier_distance": _tier_distance(high, low),
                         "pair_type": "same_dept",
                         "dept": dept,
                         "quality_tier": quality,
@@ -135,10 +161,13 @@ def _generate_cross_dept_candidates(
             {
                 "image_path_1": high["image_path"],
                 "image_path_2": low["image_path"],
+                "tier_1": high["tier"],
+                "tier_2": low["tier"],
                 "label": 1,
                 "tier_score_1": high["tier_score"],
                 "tier_score_2": low["tier_score"],
                 "score_gap": round(gap, 4),
+                "tier_distance": _tier_distance(high, low),
                 "pair_type": "cross_dept",
                 "dept": f"{high['normalized_dept']}_vs_{low['normalized_dept']}",
                 "quality_tier": 0,
@@ -154,20 +183,260 @@ def _select_with_appearance_limit(
     candidates: list[dict[str, Any]],
     target: int,
     max_appearances: int,
+    counts: Counter[str] | None = None,
+    selected_keys: set[tuple[int, int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
-    counts: Counter[str] = Counter()
+    image_counts: Counter[str] = counts if counts is not None else Counter()
+    seen_keys = selected_keys if selected_keys is not None else set()
     for pair in candidates:
         if len(selected) >= target:
             break
         first = pair["image_path_1"]
         second = pair["image_path_2"]
-        if counts[first] >= max_appearances or counts[second] >= max_appearances:
+        pair_key = (pair["post_no_1"], pair["post_no_2"], pair["label"])
+        if pair_key in seen_keys:
+            continue
+        if image_counts[first] >= max_appearances or image_counts[second] >= max_appearances:
             continue
         selected.append(pair)
-        counts[first] += 1
-        counts[second] += 1
+        seen_keys.add(pair_key)
+        image_counts[first] += 1
+        image_counts[second] += 1
     return selected
+
+
+def _sort_same_dept_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        candidates,
+        key=lambda pair: (
+            pair["tier_distance"] != 1,
+            -pair["quality_tier"],
+            pair["tier_distance"],
+            pair["score_gap"],
+        ),
+    )
+
+
+def _sort_cross_dept_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        candidates,
+        key=lambda pair: (
+            pair["tier_distance"] != 1,
+            pair["tier_distance"],
+            pair["score_gap"],
+        ),
+    )
+
+
+def _normalize_distance_ratio_targets(
+    distance1_ratio: float,
+    distance2_ratio: float,
+    distance3_ratio: float,
+) -> dict[int, float]:
+    raw = {
+        1: distance1_ratio,
+        2: distance2_ratio,
+        3: distance3_ratio,
+    }
+    if any(value < 0 for value in raw.values()):
+        raise ValueError("distance ratios must be non-negative")
+    total = sum(raw.values())
+    if total <= 0:
+        raise ValueError("at least one distance ratio must be positive")
+    return {
+        distance: value / total
+        for distance, value in raw.items()
+    }
+
+
+def _allocate_integer_targets(total: int, ratios: dict[Any, float]) -> dict[Any, int]:
+    if total <= 0:
+        return {key: 0 for key in ratios}
+
+    raw_targets = {key: total * ratio for key, ratio in ratios.items()}
+    allocated = {key: int(floor(value)) for key, value in raw_targets.items()}
+    remaining = total - sum(allocated.values())
+    for key, _ in sorted(
+        raw_targets.items(),
+        key=lambda item: (item[1] - floor(item[1]), str(item[0])),
+        reverse=True,
+    ):
+        if remaining <= 0:
+            break
+        allocated[key] += 1
+        remaining -= 1
+    return allocated
+
+
+def _allocate_pair_type_distance_targets(
+    total_pairs: int,
+    same_dept_ratio: float,
+    distance_ratio_targets: dict[int, float],
+) -> tuple[dict[str, int], dict[int, int], dict[tuple[str, int], int]]:
+    pair_type_targets = {
+        "same_dept": int(total_pairs * same_dept_ratio),
+        "cross_dept": total_pairs - int(total_pairs * same_dept_ratio),
+    }
+    distance_targets = _allocate_integer_targets(total_pairs, distance_ratio_targets)
+    cell_targets: dict[tuple[str, int], int] = {}
+    for distance, distance_target in distance_targets.items():
+        same_for_distance = int(distance_target * same_dept_ratio)
+        cell_targets[("same_dept", distance)] = same_for_distance
+        cell_targets[("cross_dept", distance)] = distance_target - same_for_distance
+
+    current_same = sum(cell_targets[("same_dept", distance)] for distance in DISTANCE_BUCKETS)
+    delta = pair_type_targets["same_dept"] - current_same
+    if delta != 0:
+        preferred_distances = sorted(
+            DISTANCE_BUCKETS,
+            key=lambda distance: distance_ratio_targets[distance],
+            reverse=True,
+        )
+        while delta != 0:
+            changed = False
+            for distance in preferred_distances:
+                same_key = ("same_dept", distance)
+                cross_key = ("cross_dept", distance)
+                if delta > 0 and cell_targets[cross_key] > 0:
+                    cell_targets[same_key] += 1
+                    cell_targets[cross_key] -= 1
+                    delta -= 1
+                    changed = True
+                elif delta < 0 and cell_targets[same_key] > 0:
+                    cell_targets[same_key] -= 1
+                    cell_targets[cross_key] += 1
+                    delta += 1
+                    changed = True
+                if delta == 0:
+                    break
+            if not changed:
+                break
+
+    return pair_type_targets, distance_targets, cell_targets
+
+
+def _bucket_candidates_by_cell(
+    candidates: list[dict[str, Any]],
+) -> dict[tuple[str, int], list[dict[str, Any]]]:
+    buckets: dict[tuple[str, int], list[dict[str, Any]]] = {
+        (pair_type, distance): []
+        for pair_type in PAIR_TYPES
+        for distance in DISTANCE_BUCKETS
+    }
+    for pair in candidates:
+        distance = int(pair["tier_distance"])
+        if distance not in DISTANCE_BUCKETS:
+            continue
+        buckets[(pair["pair_type"], distance)].append(pair)
+    return buckets
+
+
+def _select_quota_constrained_pairs(
+    candidates: list[dict[str, Any]],
+    *,
+    total_pairs: int,
+    same_dept_ratio: float,
+    max_appearances: int,
+    distance_ratio_targets: dict[int, float],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    pair_type_targets, distance_targets, cell_targets = _allocate_pair_type_distance_targets(
+        total_pairs=total_pairs,
+        same_dept_ratio=same_dept_ratio,
+        distance_ratio_targets=distance_ratio_targets,
+    )
+    candidates_by_cell = _bucket_candidates_by_cell(candidates)
+    selected: list[dict[str, Any]] = []
+    counts: Counter[str] = Counter()
+    selected_keys: set[tuple[int, int, int]] = set()
+    selected_by_cell: dict[tuple[str, int], int] = defaultdict(int)
+
+    prioritized_cells = sorted(
+        [
+            (pair_type, distance)
+            for distance in DISTANCE_BUCKETS
+            for pair_type in PAIR_TYPES
+        ],
+        key=lambda cell: (
+            len(candidates_by_cell[cell]) / max(cell_targets[cell], 1) if cell_targets[cell] else float("inf"),
+            -cell[1],
+            PAIR_TYPES.index(cell[0]),
+        ),
+    )
+    for cell in prioritized_cells:
+        chosen = _select_with_appearance_limit(
+            candidates=candidates_by_cell[cell],
+            target=cell_targets[cell],
+            max_appearances=max_appearances,
+            counts=counts,
+            selected_keys=selected_keys,
+        )
+        selected.extend(chosen)
+        selected_by_cell[cell] += len(chosen)
+
+    pair_type_counts = Counter(pair["pair_type"] for pair in selected)
+    distance_counts = Counter(int(pair["tier_distance"]) for pair in selected)
+    remaining_candidates = [
+        pair
+        for pair in candidates
+        if (pair["post_no_1"], pair["post_no_2"], pair["label"]) not in selected_keys
+    ]
+    remaining_candidates.sort(
+        key=lambda pair: (
+            pair_type_targets[pair["pair_type"]] - pair_type_counts[pair["pair_type"]] <= 0,
+            distance_targets[int(pair["tier_distance"])] - distance_counts[int(pair["tier_distance"])] <= 0,
+            -(distance_targets[int(pair["tier_distance"])] - distance_counts[int(pair["tier_distance"])]),
+            -(pair_type_targets[pair["pair_type"]] - pair_type_counts[pair["pair_type"]]),
+            -int(pair["tier_distance"]),
+        )
+    )
+    if len(selected) < total_pairs:
+        selected.extend(
+            _select_with_appearance_limit(
+                candidates=remaining_candidates,
+                target=total_pairs - len(selected),
+                max_appearances=max_appearances,
+                counts=counts,
+                selected_keys=selected_keys,
+            )
+        )
+
+    final_pair_type_counts = Counter(pair["pair_type"] for pair in selected)
+    final_distance_counts = Counter(int(pair["tier_distance"]) for pair in selected)
+    return selected[:total_pairs], {
+        "pair_type_targets": dict(pair_type_targets),
+        "distance_targets": {str(distance): distance_targets[distance] for distance in DISTANCE_BUCKETS},
+        "cell_targets": {
+            pair_type: {str(distance): cell_targets[(pair_type, distance)] for distance in DISTANCE_BUCKETS}
+            for pair_type in PAIR_TYPES
+        },
+        "available_by_cell": {
+            pair_type: {str(distance): len(candidates_by_cell[(pair_type, distance)]) for distance in DISTANCE_BUCKETS}
+            for pair_type in PAIR_TYPES
+        },
+        "selected_by_cell": {
+            pair_type: {str(distance): selected_by_cell[(pair_type, distance)] for distance in DISTANCE_BUCKETS}
+            for pair_type in PAIR_TYPES
+        },
+        "selected_pair_type_counts": dict(final_pair_type_counts),
+        "selected_distance_counts": {str(distance): final_distance_counts[distance] for distance in DISTANCE_BUCKETS},
+        "selected_distance_ratios": {
+            str(distance): final_distance_counts[distance] / max(len(selected), 1)
+            for distance in DISTANCE_BUCKETS
+        },
+        "distance_quota_attainment": {
+            str(distance): final_distance_counts[distance] / max(distance_targets[distance], 1)
+            for distance in DISTANCE_BUCKETS
+        },
+        "pair_type_quota_attainment": {
+            pair_type: final_pair_type_counts[pair_type] / max(pair_type_targets[pair_type], 1)
+            for pair_type in PAIR_TYPES
+        },
+        "distance_ratio_targets": {
+            str(distance): distance_ratio_targets[distance]
+            for distance in DISTANCE_BUCKETS
+        },
+    }
 
 
 def _build_shortfall_reasons(
@@ -191,56 +460,72 @@ def generate_pairs(
     total_pairs: int,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
-    max_appearances: int = 30,
+    max_appearances: int = 48,
     seed: int = 42,
+    distance1_ratio: float = 0.6,
+    distance2_ratio: float = 0.3,
+    distance3_ratio: float = 0.1,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rng = random.Random(seed)
     same_target = int(total_pairs * same_dept_ratio)
     cross_target = total_pairs - same_target
-
-    same_candidates = _generate_same_dept_candidates(items, min_score_gap=min_score_gap)
-    same_candidates.sort(key=lambda pair: (-pair["quality_tier"], -pair["score_gap"]))
-    same_selected = _select_with_appearance_limit(
-        candidates=same_candidates,
-        target=same_target,
-        max_appearances=max_appearances,
+    distance_ratio_targets = _normalize_distance_ratio_targets(
+        distance1_ratio=distance1_ratio,
+        distance2_ratio=distance2_ratio,
+        distance3_ratio=distance3_ratio,
     )
 
+    same_candidates = _generate_same_dept_candidates(items, min_score_gap=min_score_gap)
+    same_candidates = _sort_same_dept_candidates(same_candidates)
+    same_candidates = [
+        pair
+        for pair in same_candidates
+        if int(pair["tier_distance"]) in DISTANCE_BUCKETS
+    ]
     cross_candidates = _generate_cross_dept_candidates(
         items=items,
         min_score_gap=min_score_gap,
         seed=seed,
         max_candidates=max(total_pairs * 20, 100_000),
     )
-    cross_selected = _select_with_appearance_limit(
-        candidates=cross_candidates,
-        target=cross_target,
+    cross_candidates = _sort_cross_dept_candidates(cross_candidates)
+    cross_candidates = [
+        pair
+        for pair in cross_candidates
+        if int(pair["tier_distance"]) in DISTANCE_BUCKETS
+    ]
+    pairs, quota_diagnostics = _select_quota_constrained_pairs(
+        candidates=same_candidates + cross_candidates,
+        total_pairs=total_pairs,
+        same_dept_ratio=same_dept_ratio,
         max_appearances=max_appearances,
+        distance_ratio_targets=distance_ratio_targets,
     )
-
-    pairs = same_selected + cross_selected
     rng.shuffle(pairs)
+    selected_same = sum(1 for pair in pairs if pair["pair_type"] == "same_dept")
+    selected_cross = len(pairs) - selected_same
     diagnostics = {
         "requested_pairs": total_pairs,
         "requested_same_dept_pairs": same_target,
         "requested_cross_dept_pairs": cross_target,
         "available_same_dept_candidates": len(same_candidates),
         "available_cross_dept_candidates": len(cross_candidates),
-        "selected_same_dept_pairs": len(same_selected),
-        "selected_cross_dept_pairs": len(cross_selected),
+        "selected_same_dept_pairs": selected_same,
+        "selected_cross_dept_pairs": selected_cross,
         "produced_pairs": len(pairs),
         "shortfall_reasons": _build_shortfall_reasons(
             pair_label="same_dept",
             target=same_target,
-            selected=len(same_selected),
+            selected=selected_same,
             available_candidates=len(same_candidates),
         )
         + _build_shortfall_reasons(
             pair_label="cross_dept",
             target=cross_target,
-            selected=len(cross_selected),
+            selected=selected_cross,
             available_candidates=len(cross_candidates),
         ),
+        **quota_diagnostics,
     }
     return pairs, diagnostics
 
@@ -250,12 +535,16 @@ def build_pair_outputs(
     output_dir: str,
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
-    total_pairs: int = 50_000,
+    train_pairs_target: int = 40_000,
+    val_pairs_target: int = 5_000,
     same_dept_ratio: float = 0.5,
     min_score_gap: float = 5.0,
-    max_appearances: int = 30,
+    max_appearances: int = 48,
     seed: int = 42,
     strict: bool = True,
+    distance1_ratio: float = 0.6,
+    distance2_ratio: float = 0.3,
+    distance3_ratio: float = 0.1,
 ) -> dict[str, Any]:
     rows = [_row_to_item(row) for row in load_rows_from_csv(manifest_csv)]
     train_items, val_items, test_items = split_items_by_image(
@@ -264,8 +553,8 @@ def build_pair_outputs(
         val_ratio=val_ratio,
         seed=seed,
     )
-    train_target = int(total_pairs * train_ratio)
-    val_target = max(int(total_pairs * val_ratio), 1_000)
+    train_target = train_pairs_target
+    val_target = val_pairs_target
 
     train_pairs, train_pair_diagnostics = generate_pairs(
         items=train_items,
@@ -274,6 +563,9 @@ def build_pair_outputs(
         min_score_gap=min_score_gap,
         max_appearances=max_appearances,
         seed=seed,
+        distance1_ratio=distance1_ratio,
+        distance2_ratio=distance2_ratio,
+        distance3_ratio=distance3_ratio,
     )
     val_pairs, val_pair_diagnostics = generate_pairs(
         items=val_items,
@@ -282,6 +574,9 @@ def build_pair_outputs(
         min_score_gap=min_score_gap,
         max_appearances=max_appearances,
         seed=seed + 1,
+        distance1_ratio=distance1_ratio,
+        distance2_ratio=distance2_ratio,
+        distance3_ratio=distance3_ratio,
     )
 
     metadata_fields = [
@@ -302,6 +597,9 @@ def build_pair_outputs(
         "tier_score_1",
         "tier_score_2",
         "score_gap",
+        "tier_1",
+        "tier_2",
+        "tier_distance",
         "pair_type",
         "dept",
         "quality_tier",
@@ -326,6 +624,11 @@ def build_pair_outputs(
             "train": train_target,
             "val": val_target,
         },
+        "split_ratio_targets": {
+            "train": train_ratio,
+            "val": val_ratio,
+            "test": max(0.0, 1.0 - train_ratio - val_ratio),
+        },
         "pair_generation_train": train_pair_diagnostics,
         "pair_generation_val": val_pair_diagnostics,
         "same_dept_ratio_train": (
@@ -339,11 +642,18 @@ def build_pair_outputs(
         "tier_distribution_test": dict(Counter(item["tier"] for item in test_items)),
         "pair_type_train": dict(Counter(pair["pair_type"] for pair in train_pairs)),
         "pair_type_val": dict(Counter(pair["pair_type"] for pair in val_pairs)),
+        "tier_distance_train": dict(Counter(str(pair["tier_distance"]) for pair in train_pairs)),
+        "tier_distance_val": dict(Counter(str(pair["tier_distance"]) for pair in val_pairs)),
         "quality_tiers_train": dict(Counter(pair["quality_tier"] for pair in train_pairs)),
         "quality_tiers_val": dict(Counter(pair["quality_tier"] for pair in val_pairs)),
         "seed": seed,
         "min_score_gap": min_score_gap,
         "max_appearances": max_appearances,
+        "distance_ratio_targets": {
+            "1": distance1_ratio,
+            "2": distance2_ratio,
+            "3": distance3_ratio,
+        },
     }
     stats["pair_shortfall"] = {
         "train": {

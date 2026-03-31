@@ -27,7 +27,7 @@ sync_paths = [
   "train/data",
   "train/configs",
   "train/docs",
-  "train/reports",
+  "train/output_models/logs",
   "train/scripts",
   "train/training",
   "roadmap.md",

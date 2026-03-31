@@ -44,13 +44,12 @@ __pycache__/
 *.pyc
 *.pyo
 
-train/logs/
-train/anchors/*
-train/checkpoints/*
-train/reports/*
-!train/anchors/.gitkeep
-!train/checkpoints/.gitkeep
-!train/reports/.gitkeep
+train/output_models/anchors/*
+train/output_models/checkpoints/*
+train/output_models/logs/*
+!train/output_models/anchors/.gitkeep
+!train/output_models/checkpoints/.gitkeep
+!train/output_models/logs/.gitkeep
 
 /train/data/*
 !/train/data/metadata/

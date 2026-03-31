@@ -24,8 +24,8 @@ from training.utils import (
     write_rows_to_csv,
 )
 
-DEFAULT_RAW_REPORT = "reports/readiness_report.json"
-DEFAULT_PREPARED_REPORT = "reports/prepared_readiness_report.json"
+DEFAULT_RAW_REPORT = "output_models/logs/readiness_report.json"
+DEFAULT_PREPARED_REPORT = "output_models/logs/prepared_readiness_report.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,14 +37,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", default="training/data/snapshot_manifest.csv")
     parser.add_argument("--prepared-dir", default="training/data")
     parser.add_argument("--baseline-readiness-report", default=DEFAULT_RAW_REPORT)
-    parser.add_argument("--baseline-snapshot-report", default="reports/snapshot_report.json")
+    parser.add_argument("--baseline-snapshot-report", default="output_models/logs/snapshot_report.json")
     parser.add_argument("--min-group-size", type=int, default=15)
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--val-ratio", type=float, default=0.1)
-    parser.add_argument("--total-pairs", type=int, default=50_000)
+    parser.add_argument("--train-pairs-target", type=int, default=40_000)
+    parser.add_argument("--val-pairs-target", type=int, default=5_000)
     parser.add_argument("--same-dept-ratio", type=float, default=0.5)
     parser.add_argument("--min-score-gap", type=float, default=5.0)
-    parser.add_argument("--max-appearances", type=int, default=30)
+    parser.add_argument("--max-appearances", type=int, default=48)
+    parser.add_argument("--distance1-ratio", type=float, default=0.6)
+    parser.add_argument("--distance2-ratio", type=float, default=0.3)
+    parser.add_argument("--distance3-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -215,8 +219,8 @@ def inspect_prepared_artifacts(args: argparse.Namespace, input_summary: dict[str
             "val": 0,
         },
         "pair_targets": {
-            "train": int(args.total_pairs * args.train_ratio),
-            "val": max(int(args.total_pairs * args.val_ratio), 1_000),
+            "train": args.train_pairs_target,
+            "val": args.val_pairs_target,
         },
         "missing_files": [],
     }
@@ -347,10 +351,14 @@ def main() -> int:
                         output_dir=temp_dir,
                         train_ratio=args.train_ratio,
                         val_ratio=args.val_ratio,
-                        total_pairs=args.total_pairs,
+                        train_pairs_target=args.train_pairs_target,
+                        val_pairs_target=args.val_pairs_target,
                         same_dept_ratio=args.same_dept_ratio,
                         min_score_gap=args.min_score_gap,
                         max_appearances=args.max_appearances,
+                        distance1_ratio=args.distance1_ratio,
+                        distance2_ratio=args.distance2_ratio,
+                        distance3_ratio=args.distance3_ratio,
                         seed=args.seed,
                         strict=True,
                     )
