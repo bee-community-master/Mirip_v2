@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import plistlib
@@ -53,6 +54,7 @@ ENV_PATH = ROOT / ".env"
 LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 SYNC_LOG_DIR = ROOT / OUTPUT_MODELS_REL_DIR / "logs" / "vast_sync"
+SYNC_LOCK_PATH = SYNC_LOG_DIR / "sync-prune.lock"
 CHECKPOINT_EPOCH_PATTERN = re.compile(r"checkpoint_epoch_(\d+)\.pt$")
 LAUNCH_AGENT_START_INTERVAL = 900
 LEGACY_CHECKPOINTS_REL_DIR = "checkpoints"
@@ -89,6 +91,27 @@ def _resolve_train_path(path: str | Path) -> Path:
 def sync_log(message: str) -> None:
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[sync-prune {timestamp}] {message}", flush=True)
+
+
+def try_acquire_sync_prune_lock():
+    SYNC_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handle = SYNC_LOCK_PATH.open("w", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        handle.close()
+        return None
+    handle.write(f"{os.getpid()}\n")
+    handle.flush()
+    return handle
+
+
+def release_sync_prune_lock(handle) -> None:
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    handle.close()
 
 
 def load_env_file(path: Path = ENV_PATH) -> None:
@@ -482,84 +505,92 @@ def execute_remote_command_over_ssh(client: VastClient, instance_id: int, remote
 
 
 def sync_prune(config_path: str, instance_id: int) -> int:
-    sync_log(f"starting config={config_path} instance_id={instance_id}")
-    config_absolute = str(_resolve_repo_path(config_path))
-    api_key = require_env("VAST_API_KEY")
-    client = VastClient(api_key)
-    host, port = get_connection_info(client, instance_id)
-    config = load_toml(config_absolute)
-    remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
+    lock_handle = try_acquire_sync_prune_lock()
+    if lock_handle is None:
+        sync_log("another sync-prune is already running; skipped")
+        return 0
 
-    sync_log("pulling reports and anchors")
-    pull_result = pull_sync_prune_artifacts(host=host, port=port, remote_root=remote_root)
-    if pull_result != 0:
-        sync_log(f"initial artifact pull failed exit_code={pull_result}")
-        return pull_result
+    try:
+        sync_log(f"starting config={config_path} instance_id={instance_id}")
+        config_absolute = str(_resolve_repo_path(config_path))
+        api_key = require_env("VAST_API_KEY")
+        client = VastClient(api_key)
+        host, port = get_connection_info(client, instance_id)
+        config = load_toml(config_absolute)
+        remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
 
-    if not remote_path_exists(host, port, remote_root, TRAIN_FULL_REGISTRY):
-        clear_local_sync_cache(
-            [
-                TRAIN_FULL_REGISTRY,
-                TRAIN_FULL_CANDIDATE_REPORT,
-                TRAIN_FULL_TRAIN_REPORT,
-            ]
+        sync_log("pulling reports and anchors")
+        pull_result = pull_sync_prune_artifacts(host=host, port=port, remote_root=remote_root)
+        if pull_result != 0:
+            sync_log(f"initial artifact pull failed exit_code={pull_result}")
+            return pull_result
+
+        if not remote_path_exists(host, port, remote_root, TRAIN_FULL_REGISTRY):
+            clear_local_sync_cache(
+                [
+                    TRAIN_FULL_REGISTRY,
+                    TRAIN_FULL_CANDIDATE_REPORT,
+                    TRAIN_FULL_TRAIN_REPORT,
+                ]
+            )
+            sync_log("remote registry missing; cleared stale local registry cache and skipped prune")
+            return 0
+
+        try:
+            registry = load_postprocess_registry(TRAIN_FULL_REGISTRY)
+        except SystemExit as exc:
+            sync_log(f"registry unavailable; skipped prune reason={exc}")
+            return 0
+        checkpoints_root = _resolve_train_path(CHECKPOINTS_REL_DIR) / TRAIN_MODEL_SLUG
+        if registry_is_stale_for_local_checkpoints(registry, checkpoints_root):
+            sync_log("registry older than newest local checkpoint; skipped prune")
+            return 0
+
+        try:
+            retained_checkpoints = resolve_retained_checkpoints(registry)
+        except SystemExit as exc:
+            sync_log(f"registry retained checkpoints unavailable; skipped prune reason={exc}")
+            return 0
+        selected_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
+        current_candidate_checkpoint = registry.get("current_candidate_checkpoint")
+
+        if not remote_path_exists(host, port, remote_root, selected_checkpoint):
+            sync_log(f"selected checkpoint missing remotely; skipped prune checkpoint={selected_checkpoint}")
+            return 0
+        if current_candidate_checkpoint and not remote_path_exists(host, port, remote_root, str(current_candidate_checkpoint)):
+            sync_log(
+                "registry candidate checkpoint missing remotely; likely stale cache after restart; skipped prune "
+                f"checkpoint={current_candidate_checkpoint}"
+            )
+            return 0
+
+        sync_log(f"pulling selected best checkpoint checkpoint={selected_checkpoint}")
+        pull_result = pull_sync_prune_artifacts(
+            host=host,
+            port=port,
+            remote_root=remote_root,
+            retained_checkpoints=[selected_checkpoint],
+            selected_checkpoint=selected_checkpoint,
         )
-        sync_log("remote registry missing; cleared stale local registry cache and skipped prune")
-        return 0
+        if pull_result != 0:
+            sync_log(f"selected checkpoint pull failed exit_code={pull_result}")
+            return pull_result
 
-    try:
-        registry = load_postprocess_registry(TRAIN_FULL_REGISTRY)
-    except SystemExit as exc:
-        sync_log(f"registry unavailable; skipped prune reason={exc}")
-        return 0
-    checkpoints_root = _resolve_train_path(CHECKPOINTS_REL_DIR) / TRAIN_MODEL_SLUG
-    if registry_is_stale_for_local_checkpoints(registry, checkpoints_root):
-        sync_log("registry older than newest local checkpoint; skipped prune")
-        return 0
-
-    try:
-        retained_checkpoints = resolve_retained_checkpoints(registry)
-    except SystemExit as exc:
-        sync_log(f"registry retained checkpoints unavailable; skipped prune reason={exc}")
-        return 0
-    selected_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
-    current_candidate_checkpoint = registry.get("current_candidate_checkpoint")
-
-    if not remote_path_exists(host, port, remote_root, selected_checkpoint):
-        sync_log(f"selected checkpoint missing remotely; skipped prune checkpoint={selected_checkpoint}")
-        return 0
-    if current_candidate_checkpoint and not remote_path_exists(host, port, remote_root, str(current_candidate_checkpoint)):
+        command = build_remote_prune_command(
+            remote_root,
+            selected_checkpoint,
+            retained_checkpoints,
+            str(current_candidate_checkpoint) if current_candidate_checkpoint else None,
+        )
         sync_log(
-            "registry candidate checkpoint missing remotely; likely stale cache after restart; skipped prune "
-            f"checkpoint={current_candidate_checkpoint}"
+            "executing remote prune "
+            f"selected={selected_checkpoint} retained={','.join(retained_checkpoints)}"
         )
-        return 0
-
-    sync_log(f"pulling selected best checkpoint checkpoint={selected_checkpoint}")
-    pull_result = pull_sync_prune_artifacts(
-        host=host,
-        port=port,
-        remote_root=remote_root,
-        retained_checkpoints=[selected_checkpoint],
-        selected_checkpoint=selected_checkpoint,
-    )
-    if pull_result != 0:
-        sync_log(f"selected checkpoint pull failed exit_code={pull_result}")
-        return pull_result
-
-    command = build_remote_prune_command(
-        remote_root,
-        selected_checkpoint,
-        retained_checkpoints,
-        str(current_candidate_checkpoint) if current_candidate_checkpoint else None,
-    )
-    sync_log(
-        "executing remote prune "
-        f"selected={selected_checkpoint} retained={','.join(retained_checkpoints)}"
-    )
-    result = execute_remote_command_over_ssh(client, instance_id, command)
-    sync_log(f"finished exit_code={result}")
-    return result
+        result = execute_remote_command_over_ssh(client, instance_id, command)
+        sync_log(f"finished exit_code={result}")
+        return result
+    finally:
+        release_sync_prune_lock(lock_handle)
 
 
 def build_launch_agent_payload(config_path: str) -> dict[str, object]:

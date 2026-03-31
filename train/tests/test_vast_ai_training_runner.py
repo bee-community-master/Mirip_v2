@@ -61,6 +61,23 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn(str(config_path), payload["ProgramArguments"])
         self.assertEqual(payload["StartInterval"], 900)
 
+    def test_sync_prune_lock_allows_only_one_active_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            lock_dir = Path(temp_dir) / "logs"
+            lock_path = lock_dir / "sync-prune.lock"
+            with (
+                mock.patch.object(vast_ai_training_runner, "SYNC_LOG_DIR", lock_dir),
+                mock.patch.object(vast_ai_training_runner, "SYNC_LOCK_PATH", lock_path),
+            ):
+                first = vast_ai_training_runner.try_acquire_sync_prune_lock()
+                self.assertIsNotNone(first)
+                second = vast_ai_training_runner.try_acquire_sync_prune_lock()
+                self.assertIsNone(second)
+                vast_ai_training_runner.release_sync_prune_lock(first)
+                third = vast_ai_training_runner.try_acquire_sync_prune_lock()
+                self.assertIsNotNone(third)
+                vast_ai_training_runner.release_sync_prune_lock(third)
+
     def test_execute_remote_command_over_ssh_uses_instance_connection_info(self) -> None:
         fake_client = object()
         expected_key_path = str(Path("/tmp/vast_key").resolve())
@@ -238,6 +255,19 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         pull_sync_prune_artifacts.assert_called_once()
         clear_local_sync_cache.assert_called_once()
         load_postprocess_registry.assert_not_called()
+
+    def test_sync_prune_skips_when_another_run_holds_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "config.toml"
+            config_path.write_text("", encoding="utf-8")
+            with (
+                mock.patch.object(vast_ai_training_runner, "try_acquire_sync_prune_lock", return_value=None),
+                mock.patch.object(vast_ai_training_runner, "require_env") as require_env,
+            ):
+                result = vast_ai_training_runner.sync_prune(str(config_path), 33831416)
+
+        self.assertEqual(result, 0)
+        require_env.assert_not_called()
 
     def test_sync_prune_skips_when_registry_candidate_checkpoint_is_missing_remotely(self) -> None:
         registry = {
