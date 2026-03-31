@@ -16,6 +16,16 @@ SPEC.loader.exec_module(vast_ai_training_runner)
 
 
 class VastAiTrainingRunnerTests(unittest.TestCase):
+    def test_build_pairs_legacy_aligned_command_runs_enrichment_before_prepare_snapshot(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("build-pairs-legacy-aligned", "/workspace/mirip_v2")
+
+        enrichment_fragment = "enrich_anchor_metadata.py --metadata-dir data/metadata --report output_models/logs/anchor_group_enrichment_report.json --min-group-size 15 --apply"
+        prepare_fragment = "prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest training/data/snapshot_manifest.csv --report output_models/logs/snapshot_report.json --min-group-size 15"
+
+        self.assertIn(enrichment_fragment, command)
+        self.assertIn(prepare_fragment, command)
+        self.assertLess(command.index(enrichment_fragment), command.index(prepare_fragment))
+
     def test_load_env_file_sets_instance_id_without_overwriting_existing_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"

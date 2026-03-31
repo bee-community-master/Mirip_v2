@@ -71,6 +71,8 @@ TRAIN_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_summary.
 TRAIN_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_summary.json"
 TRAIN_BATCH_PROBE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_batch_probe.json"
 TRAIN_BATCH_PROBE_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe.json"
+TRAIN_ANCHOR_ENRICHMENT_REPORT = f"{REPORTS_REL_DIR}/anchor_group_enrichment_report.json"
+TRAIN_ANCHOR_ENRICHMENT_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/anchor_group_enrichment_report.json"
 TRAIN_ARCHIVE_DIR = f"{TRAIN_OUTPUT_MODELS_DIR}/archive"
 ENV_PATH = ROOT / ".env"
 LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
@@ -354,8 +356,9 @@ def _build_pairs_legacy_aligned_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
+            f"{python_bin} {TRAINING_DIR}/enrich_anchor_metadata.py --metadata-dir data/metadata --report {TRAIN_ANCHOR_ENRICHMENT_REPORT} --min-group-size 15 --apply",
+            f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH} --min-group-size 15",
             f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {READINESS_REPORT_PATH}",
-            f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH}",
             f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO}",
             f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {PREPARED_READINESS_REPORT_PATH}",
         ]
