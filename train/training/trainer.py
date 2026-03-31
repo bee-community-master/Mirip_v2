@@ -215,6 +215,12 @@ class DinoV3Trainer:
         torch.save(checkpoint, checkpoint_path)
         return checkpoint_path
 
+    def update_best_checkpoint_link(self, checkpoint_path: Path) -> Path:
+        best_link = Path(self.config.checkpoint_dir) / "best_model.pt"
+        best_link.unlink(missing_ok=True)
+        best_link.symlink_to(checkpoint_path.name)
+        return best_link
+
     def load_checkpoint(self, checkpoint_path: str) -> None:
         checkpoint = torch.load(resolve_project_path(checkpoint_path), map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"])
@@ -305,6 +311,7 @@ class DinoV3Trainer:
             )
             latest_completed_metrics = checkpoint_metrics
             postprocess_result: dict[str, Any] | None = None
+            best_checkpoint_target: Path | None = None
             if post_epoch_callback is not None:
                 postprocess_result = post_epoch_callback(latest_completed_checkpoint, checkpoint_metrics)
             metric_name, selection_metric_value = self._resolve_selection_metric(metrics, postprocess_result)
@@ -321,18 +328,7 @@ class DinoV3Trainer:
                     self.best_selection_metric_name = metric_name
                     self.best_val_loss = current_best_val_loss
                 self.patience_counter = 0
-                self.save_checkpoint(
-                    "best_model.pt",
-                    extra={
-                        "best_metrics": {
-                            **metrics,
-                            metric_name: selection_metric_value,
-                        },
-                        "best_selection_metric": selection_metric_value,
-                        "best_selection_metric_name": metric_name,
-                        "source_checkpoint": latest_completed_checkpoint.name if latest_completed_checkpoint else None,
-                    },
-                )
+                best_checkpoint_target = latest_completed_checkpoint
             else:
                 self.patience_counter += 1
                 self.best_val_loss = current_best_val_loss
@@ -342,6 +338,8 @@ class DinoV3Trainer:
                     latest_completed_checkpoint.name,
                     extra={"epoch_metrics": checkpoint_metrics},
                 )
+            if best_checkpoint_target is not None:
+                self.update_best_checkpoint_link(best_checkpoint_target)
 
             if self.patience_counter >= self.config.early_stopping_patience:
                 break

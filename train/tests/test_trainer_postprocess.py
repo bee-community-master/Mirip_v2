@@ -184,8 +184,34 @@ class TrainerPostprocessTests(unittest.TestCase):
 
             trainer.train([batch], [batch])
 
-            self.assertTrue((Path(temp_dir) / "best_model.pt").exists())
+            best_path = Path(temp_dir) / "best_model.pt"
+            self.assertTrue(best_path.is_symlink())
+            self.assertEqual(best_path.readlink(), Path("checkpoint_epoch_0001.pt"))
             self.assertTrue(math.isfinite(trainer.best_val_loss))
+
+    def test_best_model_link_replaces_existing_regular_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=1,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            checkpoint_path = Path(temp_dir) / "checkpoint_epoch_0001.pt"
+            checkpoint_path.write_text("placeholder", encoding="utf-8")
+            best_path = Path(temp_dir) / "best_model.pt"
+            best_path.write_text("old-best", encoding="utf-8")
+
+            trainer.update_best_checkpoint_link(checkpoint_path)
+
+            self.assertTrue(best_path.is_symlink())
+            self.assertEqual(best_path.readlink(), Path("checkpoint_epoch_0001.pt"))
 
 
 if __name__ == "__main__":
