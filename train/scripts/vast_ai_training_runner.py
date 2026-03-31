@@ -7,6 +7,7 @@ import os
 import plistlib
 import re
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -83,6 +84,11 @@ def _resolve_train_path(path: str | Path) -> Path:
     if candidate.is_absolute():
         return candidate
     return (ROOT / candidate).resolve()
+
+
+def sync_log(message: str) -> None:
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[sync-prune {timestamp}] {message}", flush=True)
 
 
 def load_env_file(path: Path = ENV_PATH) -> None:
@@ -173,6 +179,32 @@ def registry_is_stale_for_local_checkpoints(registry: dict[str, object], checkpo
     if newest_local_epoch is None or candidate_epoch is None:
         return False
     return newest_local_epoch > candidate_epoch
+
+
+def _ssh_command(host: str, port: int, remote_command: str) -> list[str]:
+    privkey_path = normalize_path(os.getenv("VAST_SSH_PRIVKEY_PATH"))
+    command = [
+        "ssh",
+        "-p",
+        str(port),
+        "-o",
+        "StrictHostKeyChecking=no",
+    ]
+    if privkey_path:
+        command.extend(["-i", str(privkey_path)])
+    command.extend([f"root@{host}", remote_command])
+    return command
+
+
+def remote_path_exists(host: str, port: int, remote_root: str, relative_path: str) -> bool:
+    remote_command = f"test -f {shlex.quote(f'{remote_root}/{TRAIN_ROOT}/{relative_path}')}"
+    result = subprocess.run(_ssh_command(host, port, remote_command), capture_output=True, text=True)
+    return result.returncode == 0
+
+
+def clear_local_sync_cache(paths: list[str]) -> None:
+    for relative_path in paths:
+        _resolve_train_path(relative_path).unlink(missing_ok=True)
 
 
 def _remote_python(remote_root: str) -> str:
@@ -448,21 +480,11 @@ def build_remote_prune_command(
 
 def execute_remote_command_over_ssh(client: VastClient, instance_id: int, remote_command: str) -> int:
     host, port = get_connection_info(client, instance_id)
-    privkey_path = normalize_path(os.getenv("VAST_SSH_PRIVKEY_PATH"))
-    cmd = [
-        "ssh",
-        "-p",
-        str(port),
-        "-o",
-        "StrictHostKeyChecking=no",
-    ]
-    if privkey_path:
-        cmd.extend(["-i", str(privkey_path)])
-    cmd.extend([f"root@{host}", remote_command])
-    return run_local_command(cmd)
+    return run_local_command(_ssh_command(host, port, remote_command))
 
 
 def sync_prune(config_path: str, instance_id: int) -> int:
+    sync_log(f"starting config={config_path} instance_id={instance_id}")
     config_absolute = str(_resolve_repo_path(config_path))
     api_key = require_env("VAST_API_KEY")
     client = VastClient(api_key)
@@ -470,21 +492,52 @@ def sync_prune(config_path: str, instance_id: int) -> int:
     config = load_toml(config_absolute)
     remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
 
+    sync_log("pulling reports and anchors")
     pull_result = pull_sync_prune_artifacts(host=host, port=port, remote_root=remote_root)
     if pull_result != 0:
+        sync_log(f"initial artifact pull failed exit_code={pull_result}")
         return pull_result
 
-    registry = load_postprocess_registry(TRAIN_FULL_REGISTRY)
+    if not remote_path_exists(host, port, remote_root, TRAIN_FULL_REGISTRY):
+        clear_local_sync_cache(
+            [
+                TRAIN_FULL_REGISTRY,
+                TRAIN_FULL_CANDIDATE_REPORT,
+                TRAIN_FULL_TRAIN_REPORT,
+            ]
+        )
+        sync_log("remote registry missing; cleared stale local registry cache and skipped prune")
+        return 0
+
+    try:
+        registry = load_postprocess_registry(TRAIN_FULL_REGISTRY)
+    except SystemExit as exc:
+        sync_log(f"registry unavailable; skipped prune reason={exc}")
+        return 0
     checkpoints_root = _resolve_train_path(CHECKPOINTS_REL_DIR) / TRAIN_MODEL_SLUG
     if registry_is_stale_for_local_checkpoints(registry, checkpoints_root):
-        raise SystemExit(
-            "Postprocess registry is older than the newest downloaded checkpoint. "
-            "Skip prune until remote postprocess finishes updating the registry."
-        )
-    retained_checkpoints = resolve_retained_checkpoints(registry)
+        sync_log("registry older than newest local checkpoint; skipped prune")
+        return 0
+
+    try:
+        retained_checkpoints = resolve_retained_checkpoints(registry)
+    except SystemExit as exc:
+        sync_log(f"registry retained checkpoints unavailable; skipped prune reason={exc}")
+        return 0
     selected_checkpoint = str(registry["selected_best_checkpoint_after_compare"])
     current_candidate_checkpoint = registry.get("current_candidate_checkpoint")
 
+    if not remote_path_exists(host, port, remote_root, selected_checkpoint):
+        sync_log(f"selected checkpoint missing remotely; skipped prune checkpoint={selected_checkpoint}")
+        return 0
+    if current_candidate_checkpoint and not remote_path_exists(host, port, remote_root, str(current_candidate_checkpoint)):
+        sync_log(
+            "registry candidate checkpoint missing remotely; likely stale cache after restart; skipped prune "
+            f"checkpoint={current_candidate_checkpoint}"
+        )
+        return 0
+
+    sync_log(f"pulling selected best checkpoint checkpoint={selected_checkpoint}")
     pull_result = pull_sync_prune_artifacts(
         host=host,
         port=port,
@@ -493,6 +546,7 @@ def sync_prune(config_path: str, instance_id: int) -> int:
         selected_checkpoint=selected_checkpoint,
     )
     if pull_result != 0:
+        sync_log(f"selected checkpoint pull failed exit_code={pull_result}")
         return pull_result
 
     command = build_remote_prune_command(
@@ -501,7 +555,13 @@ def sync_prune(config_path: str, instance_id: int) -> int:
         retained_checkpoints,
         str(current_candidate_checkpoint) if current_candidate_checkpoint else None,
     )
-    return execute_remote_command_over_ssh(client, instance_id, command)
+    sync_log(
+        "executing remote prune "
+        f"selected={selected_checkpoint} retained={','.join(retained_checkpoints)}"
+    )
+    result = execute_remote_command_over_ssh(client, instance_id, command)
+    sync_log(f"finished exit_code={result}")
+    return result
 
 
 def build_launch_agent_payload(config_path: str) -> dict[str, object]:
