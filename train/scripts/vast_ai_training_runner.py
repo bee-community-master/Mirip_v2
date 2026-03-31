@@ -417,9 +417,7 @@ def pull_sync_prune_artifacts(
     if selected_checkpoint:
         selected_local_path = checkpoint_local_path(selected_checkpoint)
         best_link = selected_local_path.parent / "best_model.pt"
-        if selected_local_path.exists() and selected_local_path.name != best_link.name:
-            best_link.unlink(missing_ok=True)
-            best_link.symlink_to(selected_local_path.name)
+        best_link.unlink(missing_ok=True)
 
     return 0
 

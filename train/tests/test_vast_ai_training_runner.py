@@ -95,6 +95,9 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
             repo_root = Path(temp_dir) / "repo"
             train_root = repo_root / "train"
             train_root.mkdir(parents=True, exist_ok=True)
+            best_link = train_root / "output_models" / "checkpoints" / "dinov3_vit7b16" / "full" / "best_model.pt"
+            best_link.parent.mkdir(parents=True, exist_ok=True)
+            best_link.write_text("stale-link-placeholder", encoding="utf-8")
             recorded_commands: list[list[str]] = []
 
             def _record_command(cmd: list[str], cwd: Path | None = None) -> int:
@@ -116,6 +119,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         self.assertEqual(len(recorded_commands), 3)
+        self.assertFalse(best_link.exists())
         self.assertIn("--partial", recorded_commands[2])
         self.assertIn("--size-only", recorded_commands[2])
         self.assertIn(
