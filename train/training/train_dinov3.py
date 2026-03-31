@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume-from")
     parser.add_argument("--resume-next-epoch", action="store_true")
+    parser.add_argument("--reset-training-state-on-resume", action="store_true")
     parser.add_argument("--wandb-project", default="mirip-v2-dinov3")
     parser.add_argument("--wandb-run-name")
     parser.add_argument("--wandb", action="store_true")
@@ -186,6 +187,7 @@ def main() -> int:
         config=config,
         resume_from=args.resume_from,
         resume_next_epoch=args.resume_next_epoch,
+        reset_training_state_on_resume=args.reset_training_state_on_resume,
     )
     postprocess_kwargs = resolve_postprocess_kwargs(args, config)
 

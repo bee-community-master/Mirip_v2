@@ -165,6 +165,62 @@ class TrainerPostprocessTests(unittest.TestCase):
             self.assertEqual(resumed.best_selection_metric, 0.61)
             self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy")
 
+    def test_reset_training_state_on_resume_keeps_best_metric_but_clears_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=2,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+                early_stopping_metric="anchor_tier_accuracy",
+                early_stopping_patience=3,
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            callback_metrics = iter([0.61, 0.57])
+
+            def callback(_path: Path, _metrics: dict[str, float]) -> dict[str, object]:
+                return {
+                    "report": {
+                        "metrics": {
+                            "anchor_tier_accuracy": next(callback_metrics),
+                        }
+                    }
+                }
+
+            batch = self._single_batch()
+            trainer.train([batch], [batch], post_epoch_callback=callback)
+
+            resumed = DinoV3Trainer(
+                model=DummyPairwiseModel(),
+                config=DinoV3TrainingConfig(
+                    checkpoint_dir=temp_dir,
+                    max_epochs=5,
+                    batch_size=2,
+                    gradient_accumulation_steps=1,
+                    num_workers=0,
+                    persistent_workers=False,
+                    pin_memory=False,
+                    device="cpu",
+                    precision="fp32",
+                    early_stopping_metric="anchor_tier_accuracy",
+                ),
+                resume_from=str(Path(temp_dir) / "checkpoint_epoch_0002.pt"),
+                resume_next_epoch=True,
+                reset_training_state_on_resume=True,
+            )
+
+            self.assertEqual(resumed.current_epoch, 2)
+            self.assertEqual(resumed.best_selection_metric, 0.61)
+            self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy")
+            self.assertEqual(resumed.patience_counter, 0)
+            self.assertEqual(resumed.global_step, 0)
+            self.assertEqual(resumed.optimizer.state_dict()["state"], {})
+
     def test_val_loss_metric_saves_best_model_on_first_epoch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = DinoV3TrainingConfig(

@@ -35,6 +35,7 @@ class DinoV3Trainer:
         config: DinoV3TrainingConfig,
         resume_from: str | None = None,
         resume_next_epoch: bool = False,
+        reset_training_state_on_resume: bool = False,
     ) -> None:
         self.model = model
         self.config = config
@@ -66,7 +67,15 @@ class DinoV3Trainer:
             )
 
         if resume_from:
-            self.load_checkpoint(resume_from)
+            self.load_checkpoint(
+                resume_from,
+                restore_optimizer_state=not reset_training_state_on_resume,
+                restore_scheduler_state=not reset_training_state_on_resume,
+                restore_global_step=not reset_training_state_on_resume,
+                restore_patience=not reset_training_state_on_resume,
+            )
+            if reset_training_state_on_resume:
+                self.peak_vram_gb = 0.0
             if resume_next_epoch:
                 self.current_epoch += 1
 
@@ -221,19 +230,35 @@ class DinoV3Trainer:
         best_link.symlink_to(checkpoint_path.name)
         return best_link
 
-    def load_checkpoint(self, checkpoint_path: str) -> None:
+    def load_checkpoint(
+        self,
+        checkpoint_path: str,
+        *,
+        restore_optimizer_state: bool = True,
+        restore_scheduler_state: bool = True,
+        restore_global_step: bool = True,
+        restore_patience: bool = True,
+    ) -> None:
         checkpoint = torch.load(resolve_project_path(checkpoint_path), map_location=self.device)
         self.model.load_state_dict(checkpoint["model_state_dict"])
-        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-        self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        if restore_optimizer_state:
+            self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if restore_scheduler_state:
+            self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
         self.current_epoch = int(checkpoint.get("epoch", 0))
-        self.global_step = int(checkpoint.get("global_step", 0))
+        if restore_global_step:
+            self.global_step = int(checkpoint.get("global_step", 0))
+        else:
+            self.global_step = 0
         self.best_val_loss = float(checkpoint.get("best_val_loss", math.inf))
         best_selection_metric = checkpoint.get("best_selection_metric")
         self.best_selection_metric = float(best_selection_metric) if best_selection_metric is not None else None
         best_selection_metric_name = checkpoint.get("best_selection_metric_name")
         self.best_selection_metric_name = str(best_selection_metric_name) if best_selection_metric_name else None
-        self.patience_counter = int(checkpoint.get("patience_counter", 0))
+        if restore_patience:
+            self.patience_counter = int(checkpoint.get("patience_counter", 0))
+        else:
+            self.patience_counter = 0
         self.peak_vram_gb = float(checkpoint.get("peak_vram_gb", 0.0))
 
     def _resolve_selection_metric(
