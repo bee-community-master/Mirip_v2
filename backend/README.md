@@ -61,6 +61,12 @@ The current backend can be deployed in three progressively richer profiles:
 - `stub-spot`: Cloud Run API backed by Firestore plus one-shot Spot VM workers running `stub` inference. This is the recommended profile until the real model bundle is ready.
 - `full`: Cloud Run + Spot VM with `cpu_onnx` model bundles from GCS.
 
+Image builds default to `BUILD_STRATEGY=local-first`, which tries a local Docker push to Artifact
+Registry before falling back to Cloud Build. The intended local path uses the `colima-x86` Docker
+context (`COLIMA_PROFILE=x86`) and publishes `linux/amd64` images. `stub` workers build with a
+lean dependency profile so local image publishing stays practical while the real model is still
+unfinished.
+
 Bootstrap a project and deploy the current `stub-spot` stack:
 
 ```bash
@@ -93,6 +99,16 @@ SERVICE_ACCOUNT_EMAIL=mirip-runtime@<gcp-project-id>.iam.gserviceaccount.com \
 ```
 
 `deploy_stub_stack.sh` prints a random `LOCAL_DEV_TOKEN`. Use `Authorization: Bearer <token>` against authenticated routes until Firebase Auth is wired to the production client.
+
+Useful build overrides:
+
+```bash
+BUILD_STRATEGY=local-only        # fail if the local docker push fails
+BUILD_STRATEGY=cloud             # skip local docker and use Cloud Build directly
+LOCAL_DOCKER_CONTEXT=colima-x86  # local default
+COLIMA_PROFILE=x86               # local default
+LOCAL_PLATFORM=linux/amd64       # local default
+```
 
 ## Environment
 

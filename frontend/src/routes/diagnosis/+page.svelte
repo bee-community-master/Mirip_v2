@@ -15,8 +15,8 @@
 	import GlassCard from '$lib/components/GlassCard.svelte';
 	import RadarChart from '$lib/components/RadarChart.svelte';
 	import SectionHeading from '$lib/components/SectionHeading.svelte';
-	import { diagnosisMock } from '$lib/mocks/diagnosis';
 	import type { ExpertTab, TierKey, UniversityKey } from '$lib/types';
+	import { createDiagnosisStubData } from '$lib/utils/diagnosis';
 	import { buildPathWithQuery, readQueryOption } from '$lib/utils/query';
 
 	const tierOptions = ['FREE', 'STANDARD', 'PRO'] as const;
@@ -34,13 +34,6 @@
 		icon: typeof Sparkles;
 		label: string;
 	}>;
-	const universityTabs = universityOptions.map((key) => ({
-		key,
-		label: diagnosisMock.universities[key].label
-	})) satisfies ReadonlyArray<{
-		key: UniversityKey;
-		label: string;
-	}>;
 	const tierOrder: Record<TierKey, number> = {
 		FREE: 0,
 		STANDARD: 1,
@@ -55,6 +48,7 @@
 	let error = $state('');
 	let isDragging = $state(false);
 	let analyzingTimer: ReturnType<typeof setTimeout> | null = null;
+	let diagnosisData = $state(createDiagnosisStubData('initial-demo'));
 
 	const tier = $derived(readQueryOption(page.url.searchParams, 'tier', tierOptions, 'FREE'));
 	const universityKey = $derived(
@@ -64,7 +58,13 @@
 		readQueryOption(page.url.searchParams, 'expert', expertOptions, 'AI')
 	);
 
-	const selectedUniversity = $derived(diagnosisMock.universities[universityKey]);
+	const universityTabs = $derived(
+		universityOptions.map((key) => ({
+			key,
+			label: diagnosisData.universities[key].label
+		}))
+	);
+	const selectedUniversity = $derived(diagnosisData.universities[universityKey]);
 	const standardUnlocked = $derived(tierOrder[tier] >= tierOrder.STANDARD);
 	const proUnlocked = $derived(tierOrder[tier] >= tierOrder.PRO);
 
@@ -125,6 +125,9 @@
 		error = '';
 		selectedFile = file;
 		previewUrl = URL.createObjectURL(file);
+		diagnosisData = createDiagnosisStubData(
+			`${file.name}:${file.size}:${file.lastModified}:${Date.now()}`
+		);
 		stage = 'analyzing';
 
 		analyzingTimer = setTimeout(() => {
@@ -152,6 +155,7 @@
 		clearPreview();
 		error = '';
 		selectedFile = null;
+		diagnosisData = createDiagnosisStubData('reset-demo');
 		stage = 'upload';
 		updateQuery({ tier: 'FREE', uni: 'HONGIK', expert: 'AI' });
 	}
@@ -175,7 +179,7 @@
 		<SectionHeading
 			badge="AI Diagnosis"
 			title="작품을 업로드하고 대학별 합격 가능성을 확인하세요"
-			subtitle="실제 API 없이도 업로드, 분석 상태, 결과, 티어 전환, 대학/전문가 탭을 모두 로컬 상태와 fixture로 재현합니다."
+			subtitle="모델 완성 전까지는 업로드 이미지를 세션 안에서만 미리보고, 잠시 분석중 화면 뒤에 랜덤 stub 결과를 보여줍니다."
 			center={true}
 			level="h1"
 		/>
@@ -232,10 +236,10 @@
 				</div>
 
 				<h2 class="font-display text-3xl font-bold tracking-[-0.05em] text-white">
-					DINOv2 AI 분석 중…
+					임시 진단 결과 생성 중…
 				</h2>
 				<p class="soft-text mt-3">
-					수만 개의 합격작 데이터와 업로드한 작품을 대조하고 있습니다.
+					모델 배포 전까지는 이미지를 영구 저장하지 않고, 이 세션 안에서만 stub 분석을 준비합니다.
 				</p>
 			</div>
 		{:else}
@@ -271,11 +275,11 @@
 							<div class="grid gap-6 xl:grid-cols-[1fr_240px] xl:items-center">
 								<div class="flex flex-col gap-5">
 									<div class="h-[320px]">
-										<RadarChart data={diagnosisMock.radar} />
+										<RadarChart data={diagnosisData.radar} />
 									</div>
 									<div>
 										<div class="flex h-8 overflow-hidden rounded-full text-[11px] font-black">
-											{#each diagnosisMock.tierResult.segments as segment}
+											{#each diagnosisData.tierResult.segments as segment}
 												<div
 													class={`flex items-center justify-center ${segment.fillClass} ${segment.textClass}`}
 													style={`flex: ${segment.value};`}
@@ -285,9 +289,9 @@
 											{/each}
 										</div>
 										<p class="mt-4 text-center text-sm font-medium text-white/60">
-											<span class="font-bold text-white">{diagnosisMock.tierResult.predictedGrade}등급</span>
-											확률 {diagnosisMock.tierResult.probability}% · 신뢰구간 ±1등급 내 적중률
-											<span class="font-bold text-white">{diagnosisMock.tierResult.confidence}%</span>
+											<span class="font-bold text-white">{diagnosisData.tierResult.predictedGrade}등급</span>
+											확률 {diagnosisData.tierResult.probability}% · 신뢰구간 ±1등급 내 적중률
+											<span class="font-bold text-white">{diagnosisData.tierResult.confidence}%</span>
 										</p>
 									</div>
 								</div>
@@ -311,7 +315,7 @@
 										/>
 									</div>
 									<p class="soft-text mt-4">
-										현재 업로드한 이미지를 기준으로 분석한 mock 결과입니다. 파일을 다시 올리면 상태가 처음부터 다시 시작됩니다.
+										현재 업로드한 이미지를 기준으로 생성한 stub 결과입니다. 파일을 다시 올리면 새로운 랜덤 결과가 만들어집니다.
 									</p>
 								</div>
 							</div>
@@ -367,7 +371,7 @@
 						<div
 							class={`grid gap-6 md:grid-cols-3 ${!standardUnlocked ? 'pointer-events-none select-none blur-sm opacity-35' : ''}`}
 						>
-							{#each diagnosisMock.standardMatches as match}
+							{#each diagnosisData.standardMatches as match}
 								<GlassCard className="rounded-[28px] p-6">
 									<div class="flex items-start justify-between gap-4">
 										<h3 class="min-w-0 font-display text-2xl font-bold leading-tight tracking-[-0.04em] text-white">

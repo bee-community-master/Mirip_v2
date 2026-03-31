@@ -39,25 +39,18 @@ ensure_repository() {
 }
 
 build_image() {
-  local config_file
-  config_file="$(mktemp)"
-  cat > "${config_file}" <<EOF
-steps:
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - build
-      - -f
-      - deploy/Dockerfile.api
-      - -t
-      - ${IMAGE_URI}
-      - .
-images:
-  - ${IMAGE_URI}
-EOF
-  gcloud builds submit "${BACKEND_DIR}" \
-    --config "${config_file}" \
-    --project "${PROJECT_ID}"
-  rm -f "${config_file}"
+  PROJECT_ID="${PROJECT_ID}" \
+  REGION="${REGION}" \
+  BACKEND_DIR="${BACKEND_DIR}" \
+  BUILD_CONTEXT_DIR="${BACKEND_DIR}" \
+  DOCKERFILE_PATH="deploy/Dockerfile.api" \
+  IMAGE_URI="${IMAGE_URI}" \
+  BUILD_STRATEGY="${BUILD_STRATEGY:-local-first}" \
+  LOCAL_DOCKER_CONTEXT="${LOCAL_DOCKER_CONTEXT:-colima-x86}" \
+  LOCAL_PLATFORM="${LOCAL_PLATFORM:-linux/amd64}" \
+  COLIMA_PROFILE="${COLIMA_PROFILE:-x86}" \
+  COLIMA_ARCH="${COLIMA_ARCH:-x86_64}" \
+  "${SCRIPT_DIR}/build_and_push_image.sh"
 }
 
 append_env() {

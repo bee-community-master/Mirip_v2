@@ -7,11 +7,14 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import structlog
+
 from mirip_backend.domain.diagnosis.entities import DiagnosisJob
 from mirip_backend.infrastructure.config.settings import ComputeSettings
 from mirip_backend.shared.exceptions import DependencyError
 
 INSTANCE_NAME_PREFIX = "mirip-diagnosis"
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -80,15 +83,6 @@ class ComputeEngineSpotVmLauncher:
             },
             "metadata": {"items": metadata_items},
         }
-        if self.settings.service_account:
-            resource["service_accounts"] = [
-                {
-                    "email": self.settings.service_account,
-                    "scopes": ["https://www.googleapis.com/auth/cloud-platform"],
-                }
-            ]
-        if self.settings.subnetwork:
-            resource["network_interfaces"] = [{"subnetwork": self.settings.subnetwork}]
         return resource
 
     async def launch_for_job(
@@ -132,6 +126,14 @@ class ComputeEngineSpotVmLauncher:
         try:
             await asyncio.to_thread(_launch)
         except Exception as exc:
+            logger.exception(
+                "diagnosis_vm_launch_failed",
+                project_id=self.settings.project_id,
+                zone=self.settings.zone,
+                instance_template=self.settings.instance_template,
+                instance_name=instance_name,
+                job_id=job.id,
+            )
             raise DependencyError("Failed to launch Spot VM for diagnosis job") from exc
 
         return DiagnosisVmLaunchResult(
@@ -161,4 +163,10 @@ class ComputeEngineSpotVmLauncher:
         try:
             await asyncio.to_thread(_delete)
         except Exception as exc:
+            logger.exception(
+                "diagnosis_vm_delete_failed",
+                project_id=self.settings.project_id,
+                zone=zone,
+                instance_name=instance_name,
+            )
             raise DependencyError("Failed to delete Spot VM instance") from exc

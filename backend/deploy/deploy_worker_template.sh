@@ -18,6 +18,7 @@ BOOT_DISK_SIZE="${BOOT_DISK_SIZE:-30GB}"
 WORKER_MODE="${WORKER_MODE:-stub}"
 DATA_BACKEND="${DATA_BACKEND:-firestore}"
 STORAGE_BACKEND="${STORAGE_BACKEND:-fake}"
+WORKER_DEPENDENCY_PROFILE="${WORKER_DEPENDENCY_PROFILE:-}"
 
 if [[ -z "${PROJECT_ID}" ]]; then
   echo "PROJECT_ID is required. Set PROJECT_ID or run gcloud config set project <project-id>." >&2
@@ -42,25 +43,27 @@ ensure_repository() {
 }
 
 build_image() {
-  local config_file
-  config_file="$(mktemp)"
-  cat > "${config_file}" <<EOF
-steps:
-  - name: gcr.io/cloud-builders/docker
-    args:
-      - build
-      - -f
-      - deploy/Dockerfile.worker
-      - -t
-      - ${IMAGE_URI}
-      - .
-images:
-  - ${IMAGE_URI}
-EOF
-  gcloud builds submit "${BACKEND_DIR}" \
-    --config "${config_file}" \
-    --project "${PROJECT_ID}"
-  rm -f "${config_file}"
+  local dependency_profile="${WORKER_DEPENDENCY_PROFILE}"
+  if [[ -z "${dependency_profile}" ]]; then
+    if [[ "${WORKER_MODE}" == "stub" ]]; then
+      dependency_profile="stub"
+    else
+      dependency_profile="full"
+    fi
+  fi
+  PROJECT_ID="${PROJECT_ID}" \
+  REGION="${REGION}" \
+  BACKEND_DIR="${BACKEND_DIR}" \
+  BUILD_CONTEXT_DIR="${BACKEND_DIR}" \
+  DOCKERFILE_PATH="deploy/Dockerfile.worker" \
+  IMAGE_URI="${IMAGE_URI}" \
+  BUILD_STRATEGY="${BUILD_STRATEGY:-local-first}" \
+  LOCAL_DOCKER_CONTEXT="${LOCAL_DOCKER_CONTEXT:-colima-x86}" \
+  LOCAL_PLATFORM="${LOCAL_PLATFORM:-linux/amd64}" \
+  COLIMA_PROFILE="${COLIMA_PROFILE:-x86}" \
+  COLIMA_ARCH="${COLIMA_ARCH:-x86_64}" \
+  WORKER_DEPENDENCY_PROFILE="${dependency_profile}" \
+  "${SCRIPT_DIR}/build_and_push_image.sh"
 }
 
 make_worker_env_file() {
