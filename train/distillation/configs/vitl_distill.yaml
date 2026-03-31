@@ -1,0 +1,123 @@
+experiment:
+  name: vitl_patch_distill
+  seed: 42
+  smoke_train_limit: 128
+  smoke_val_limit: 64
+
+paths:
+  metadata_dir: data/metadata
+  image_root: data
+  prepared_train_csv: training/data/metadata_train.csv
+  prepared_val_csv: training/data/metadata_val.csv
+  checkpoint_root: checkpoints/distill_vitl
+  report_root: reports/distillation
+  student_export_dirname: best_student_backbone
+
+data:
+  source_type: mirip_staged
+  prepared_split_preferred: true
+  train_ratio: 0.9
+  val_ratio: 0.1
+  split_salt: mirip-distill
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
+  augmentation:
+    min_scale: 0.78
+    horizontal_flip_prob: 0.5
+    color_jitter_brightness: 0.06
+    color_jitter_contrast: 0.06
+    color_jitter_saturation: 0.04
+    color_jitter_hue: 0.015
+
+models:
+  teacher_name: PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m
+  student_name: PIA-SPACE-LAB/dinov3-vitl-pretrain-lvd1689m
+  backend_order: [huggingface, timm]
+  teacher_dtype: auto
+  student_dtype: auto
+  trust_remote_code: false
+  gradient_checkpointing: true
+
+distillation:
+  patch_loss_type: cosine
+  normalize_features: true
+  rel_patch_sample_size: 128
+  use_relational_loss: true
+  weights:
+    cls: 1.0
+    patch: 2.0
+    rel: 1.0
+    mid: 0.3
+    pool: 0.2
+
+stages:
+  - name: stage1_main
+    enabled: true
+    resolution: 256
+    epochs: 8
+    batch_size: 2
+    gradient_accumulation_steps: 16
+    learning_rate: 1.0e-4
+    weight_decay: 0.05
+    warmup_epochs: 1
+    loss_weights:
+      cls: 1.0
+      patch: 2.0
+      rel: 1.0
+      mid: 0.3
+      pool: 0.2
+  - name: stage2_highres
+    enabled: true
+    resolution: 384
+    epochs: 4
+    batch_size: 1
+    gradient_accumulation_steps: 24
+    learning_rate: 5.0e-5
+    weight_decay: 0.05
+    warmup_epochs: 1
+    loss_weights:
+      cls: 1.0
+      patch: 2.0
+      rel: 1.0
+      mid: 0.3
+      pool: 0.2
+  - name: stage3_refine
+    enabled: true
+    resolution: 384
+    epochs: 2
+    batch_size: 1
+    gradient_accumulation_steps: 24
+    learning_rate: 2.5e-5
+    weight_decay: 0.03
+    warmup_epochs: 0
+    loss_weights:
+      cls: 0.7
+      patch: 2.0
+      rel: 1.0
+      mid: 0.3
+      pool: 0.1
+
+optimizer:
+  betas: [0.9, 0.999]
+  eps: 1.0e-8
+  weight_decay: 0.05
+  gradient_clip_norm: 1.0
+  precision: auto
+  cosine_min_lr: 1.0e-6
+
+logging:
+  level: INFO
+  log_every_steps: 10
+  jsonl_name: history.jsonl
+  tensorboard_enabled: true
+  wandb_enabled: false
+  wandb_project: mirip-v2-dinov3-distill
+
+evaluation:
+  batch_size: 2
+  retrieval_k: [1, 5]
+  visualization_samples: 8
+  save_visualizations: true
+  max_retrieval_samples: 512
