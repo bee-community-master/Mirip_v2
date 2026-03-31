@@ -130,6 +130,32 @@ async def test_create_diagnosis_job_records_vm_launch_metadata() -> None:
     assert job.metadata[INPUT_OBJECT_NAMES_METADATA_KEY] == [upload.object_name]
 
 
+async def test_create_diagnosis_job_launches_stub_worker_when_vm_launcher_is_configured() -> None:
+    store = MemoryDocumentStore()
+    upload_repository = DocumentUploadRepository(store)
+    job_repository = DocumentDiagnosisJobRepository(store)
+    upload = _make_uploaded_asset(upload_id="upl-6")
+    await upload_repository.create(upload)
+
+    usecase = CreateDiagnosisJobUseCase(
+        upload_repository,
+        job_repository,
+        vm_launcher=FakeVmLauncher(),
+        worker_model_uri=None,
+        worker_mode="stub",
+    )
+    job = await usecase.execute(
+        actor=AuthenticatedUser(user_id="user-123"),
+        command=CreateDiagnosisJobCommand(upload_ids=["upl-6"], department="fine_art"),
+    )
+
+    assert job.status == JobStatus.QUEUED
+    assert job.metadata["launch_state"] == "launched"
+    assert job.metadata["model_bundle_uri"] == ""
+    assert job.metadata["target_job_id"] == job.id
+    assert job.metadata[INPUT_OBJECT_NAMES_METADATA_KEY] == [upload.object_name]
+
+
 async def test_create_diagnosis_job_fails_fast_when_cpu_onnx_launcher_is_missing() -> None:
     store = MemoryDocumentStore()
     upload_repository = DocumentUploadRepository(store)

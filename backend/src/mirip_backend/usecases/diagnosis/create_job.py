@@ -111,8 +111,6 @@ class CreateDiagnosisJobUseCase:
         )
 
     async def _launch_worker_vm(self, job: DiagnosisJob) -> DiagnosisJob:
-        if self._worker_mode == "stub":
-            return job
         if self._vm_launcher is None:
             if self._worker_mode == "cpu_onnx":
                 return await self._fail_job(
@@ -120,15 +118,20 @@ class CreateDiagnosisJobUseCase:
                     reason="Worker VM launcher is not configured",
                 )
             return job
+        if self._worker_mode == "stub":
+            return await self._launch_vm(job, model_uri=self._worker_model_uri or "")
         if not self._worker_model_uri:
             return await self._fail_job(
                 job,
                 reason="Worker model bundle URI is not configured",
             )
+        return await self._launch_vm(job, model_uri=self._worker_model_uri)
+
+    async def _launch_vm(self, job: DiagnosisJob, *, model_uri: str) -> DiagnosisJob:
         try:
             launch = await self._vm_launcher.launch_for_job(
                 job=job,
-                model_uri=self._worker_model_uri,
+                model_uri=model_uri,
                 worker_mode=self._worker_mode,
             )
         except DependencyError:

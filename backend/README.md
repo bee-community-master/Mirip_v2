@@ -53,6 +53,47 @@ uv run python -m mirip_backend.worker.main
 uv lock
 ```
 
+## Deployment
+
+The current backend can be deployed in three progressively richer profiles:
+
+- `preview`: Cloud Run only, `memory` + `fake` storage, useful for `/health` and public API smoke checks.
+- `stub-spot`: Cloud Run API backed by Firestore plus one-shot Spot VM workers running `stub` inference. This is the recommended profile until the real model bundle is ready.
+- `full`: Cloud Run + Spot VM with `cpu_onnx` model bundles from GCS.
+
+Bootstrap a project and deploy the current `stub-spot` stack:
+
+```bash
+cd backend
+PROJECT_ID=<gcp-project-id> \
+REGION=asia-northeast3 \
+ZONE=asia-northeast3-b \
+./deploy/deploy_stub_stack.sh
+```
+
+Deploy only the API:
+
+```bash
+cd backend
+PROJECT_ID=<gcp-project-id> \
+REGION=asia-northeast3 \
+DEPLOY_PROFILE=preview \
+./deploy/deploy_api.sh
+```
+
+Create or refresh the worker template:
+
+```bash
+cd backend
+PROJECT_ID=<gcp-project-id> \
+REGION=asia-northeast3 \
+ZONE=asia-northeast3-b \
+SERVICE_ACCOUNT_EMAIL=mirip-runtime@<gcp-project-id>.iam.gserviceaccount.com \
+./deploy/deploy_worker_template.sh
+```
+
+`deploy_stub_stack.sh` prints a random `LOCAL_DEV_TOKEN`. Use `Authorization: Bearer <token>` against authenticated routes until Firebase Auth is wired to the production client.
+
 ## Environment
 
 Key settings are grouped around:
