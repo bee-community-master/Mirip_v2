@@ -137,17 +137,17 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
                 )
 
         self.assertEqual(result, 0)
-        self.assertEqual(len(recorded_commands), 3)
+        self.assertEqual(len(recorded_commands), 2)
         self.assertFalse(best_link.exists())
-        self.assertIn("--partial", recorded_commands[2])
-        self.assertIn("--size-only", recorded_commands[2])
+        self.assertIn("--partial", recorded_commands[1])
+        self.assertIn("--size-only", recorded_commands[1])
         self.assertIn(
             "root@ssh1.vast.ai:/workspace/mirip_v2/train/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
-            recorded_commands[2],
+            recorded_commands[1],
         )
         self.assertIn(
             str(train_root / "output_models" / "checkpoints" / "dinov3_vit7b16" / "full" / "checkpoint_epoch_0002.pt"),
-            recorded_commands[2],
+            recorded_commands[1],
         )
 
     def test_load_postprocess_registry_requires_selected_best_checkpoint(self) -> None:
@@ -189,7 +189,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
             self.assertTrue(stale)
 
-    def test_sync_prune_downloads_only_selected_best_checkpoint_locally(self) -> None:
+    def test_sync_prune_prunes_remotely_without_downloading_checkpoints(self) -> None:
         registry = {
             "selected_best_checkpoint_after_compare": "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",
             "current_candidate_checkpoint": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
@@ -217,15 +217,10 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
                 result = vast_ai_training_runner.sync_prune(str(config_path), 33831416)
 
         self.assertEqual(result, 0)
-        self.assertEqual(pull_sync_prune_artifacts.call_count, 2)
+        pull_sync_prune_artifacts.assert_called_once()
         first_call = pull_sync_prune_artifacts.call_args_list[0]
-        second_call = pull_sync_prune_artifacts.call_args_list[1]
         self.assertEqual(first_call.kwargs["host"], "ssh1.vast.ai")
         self.assertIsNone(first_call.kwargs.get("retained_checkpoints"))
-        self.assertEqual(
-            second_call.kwargs["retained_checkpoints"],
-            ["checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt"],
-        )
         build_remote_prune_command.assert_called_once_with(
             "/workspace/mirip_v2",
             "checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0002.pt",

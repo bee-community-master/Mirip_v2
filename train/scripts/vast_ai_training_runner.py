@@ -411,14 +411,14 @@ def pull_sync_prune_artifacts(
     host: str,
     port: int,
     remote_root: str,
+    include_anchors: bool = False,
     retained_checkpoints: list[str] | None = None,
     selected_checkpoint: str | None = None,
 ) -> int:
     rsync_prefix = build_rsync_prefix(port)
-    artifact_dirs = (
-        (TRAIN_REPORTS_DIR, ROOT / REPORTS_REL_DIR),
-        (TRAIN_ANCHORS_DIR, ROOT / ANCHORS_REL_DIR),
-    )
+    artifact_dirs = [(TRAIN_REPORTS_DIR, ROOT / REPORTS_REL_DIR)]
+    if include_anchors:
+        artifact_dirs.append((TRAIN_ANCHORS_DIR, ROOT / ANCHORS_REL_DIR))
     for remote_dir, local_dir in artifact_dirs:
         local_dir.mkdir(parents=True, exist_ok=True)
         cmd = list(rsync_prefix)
@@ -520,7 +520,7 @@ def sync_prune(config_path: str, instance_id: int) -> int:
         config = load_toml(config_absolute)
         remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
 
-        sync_log("pulling reports and anchors")
+        sync_log("pulling reports")
         pull_result = pull_sync_prune_artifacts(host=host, port=port, remote_root=remote_root)
         if pull_result != 0:
             sync_log(f"initial artifact pull failed exit_code={pull_result}")
@@ -564,18 +564,6 @@ def sync_prune(config_path: str, instance_id: int) -> int:
                 f"checkpoint={current_candidate_checkpoint}"
             )
             return 0
-
-        sync_log(f"pulling selected best checkpoint checkpoint={selected_checkpoint}")
-        pull_result = pull_sync_prune_artifacts(
-            host=host,
-            port=port,
-            remote_root=remote_root,
-            retained_checkpoints=[selected_checkpoint],
-            selected_checkpoint=selected_checkpoint,
-        )
-        if pull_result != 0:
-            sync_log(f"selected checkpoint pull failed exit_code={pull_result}")
-            return pull_result
 
         command = build_remote_prune_command(
             remote_root,
