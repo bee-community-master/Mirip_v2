@@ -55,6 +55,7 @@ LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 SYNC_LOG_DIR = ROOT / OUTPUT_MODELS_REL_DIR / "logs" / "vast_sync"
 SYNC_LOCK_PATH = SYNC_LOG_DIR / "sync-prune.lock"
+LAUNCH_AGENT_LOG_DIR = Path.home() / "Library" / "Logs" / LAUNCH_AGENT_LABEL
 CHECKPOINT_EPOCH_PATTERN = re.compile(r"checkpoint_epoch_(\d+)\.pt$")
 LAUNCH_AGENT_START_INTERVAL = 900
 LEGACY_CHECKPOINTS_REL_DIR = "checkpoints"
@@ -595,9 +596,9 @@ def sync_prune(config_path: str, instance_id: int) -> int:
 
 def build_launch_agent_payload(config_path: str) -> dict[str, object]:
     config_absolute = str(_resolve_repo_path(config_path))
-    SYNC_LOG_DIR.mkdir(parents=True, exist_ok=True)
-    stdout_path = SYNC_LOG_DIR / "launchd.stdout.log"
-    stderr_path = SYNC_LOG_DIR / "launchd.stderr.log"
+    LAUNCH_AGENT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    stdout_path = LAUNCH_AGENT_LOG_DIR / "launchd.stdout.log"
+    stderr_path = LAUNCH_AGENT_LOG_DIR / "launchd.stderr.log"
     return {
         "Label": LAUNCH_AGENT_LABEL,
         "ProgramArguments": [

@@ -53,13 +53,15 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.toml"
             config_path.write_text("", encoding="utf-8")
-            with mock.patch.object(vast_ai_training_runner, "SYNC_LOG_DIR", Path(temp_dir) / "logs"):
+            with mock.patch.object(vast_ai_training_runner, "LAUNCH_AGENT_LOG_DIR", Path(temp_dir) / "launchd_logs"):
                 payload = vast_ai_training_runner.build_launch_agent_payload(str(config_path))
 
         self.assertEqual(payload["Label"], "com.mirip.vast-checkpoint-sync")
         self.assertIn("sync-prune", payload["ProgramArguments"])
         self.assertIn(str(config_path), payload["ProgramArguments"])
         self.assertEqual(payload["StartInterval"], 900)
+        self.assertIn("launchd_logs", payload["StandardOutPath"])
+        self.assertIn("launchd_logs", payload["StandardErrorPath"])
 
     def test_sync_prune_lock_allows_only_one_active_run(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
