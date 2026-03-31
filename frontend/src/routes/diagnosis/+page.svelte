@@ -41,6 +41,17 @@
 	};
 
 	type Stage = 'upload' | 'analyzing' | 'result';
+	type ProSectionKey = 'fit' | 'strengths' | 'trend' | 'guides' | 'plan';
+
+	function createDefaultProSections(): Record<ProSectionKey, boolean> {
+		return {
+			fit: true,
+			strengths: true,
+			trend: false,
+			guides: false,
+			plan: false
+		};
+	}
 
 	let stage = $state<Stage>('upload');
 	let selectedFile = $state<File | null>(null);
@@ -49,6 +60,7 @@
 	let isDragging = $state(false);
 	let analyzingTimer: ReturnType<typeof setTimeout> | null = null;
 	let diagnosisData = $state(createDiagnosisStubData('initial-demo'));
+	let openProSections = $state(createDefaultProSections());
 
 	const tier = $derived(readQueryOption(page.url.searchParams, 'tier', tierOptions, 'FREE'));
 	const universityKey = $derived(
@@ -67,6 +79,86 @@
 	const selectedUniversity = $derived(diagnosisData.universities[universityKey]);
 	const standardUnlocked = $derived(tierOrder[tier] >= tierOrder.STANDARD);
 	const proUnlocked = $derived(tierOrder[tier] >= tierOrder.PRO);
+	const improvementAxes = $derived(selectedUniversity.axisDistances.filter((axis) => axis.needImprovement));
+	const stableAxes = $derived(selectedUniversity.axisDistances.filter((axis) => !axis.needImprovement));
+	const activeGuideCount = $derived(selectedUniversity.expertGuides[expertTab].length);
+	const proOverviewCards = $derived([
+		{
+			key: 'fit' as const,
+			label: '합격 거리',
+			title: '축별 포지션',
+			metric: `${improvementAxes.length}개 보완`,
+			description: `${selectedUniversity.label} 기준으로 먼저 끌어올릴 축을 확인합니다.`
+		},
+		{
+			key: 'strengths' as const,
+			label: '강약점',
+			title: '평가자 메모',
+			metric: `${selectedUniversity.strengths.length + selectedUniversity.improvements.length}개 포인트`,
+			description: '강점은 고정하고, 보완점은 따로 분리해서 볼 수 있습니다.'
+		},
+		{
+			key: 'trend' as const,
+			label: '기조 비교',
+			title: '최근 출제 흐름',
+			metric: `${selectedUniversity.historyRows.length - 1}년 비교`,
+			description: '연도별 커트라인과 최근 인사이트를 한 번에 확인합니다.'
+		},
+		{
+			key: 'guides' as const,
+			label: '전문가',
+			title: '심층 코멘트',
+			metric: `${activeGuideCount}개 의견`,
+			description: 'AI, 강사, 교수 관점을 눌러가며 비교할 수 있습니다.'
+		},
+		{
+			key: 'plan' as const,
+			label: '액션 플랜',
+			title: '실전 루틴',
+			metric: '3단계 제안',
+			description: '지금 점수 기준으로 바로 실행할 연습 순서를 정리합니다.'
+		}
+	]);
+	const proActionPlan = $derived([
+		{
+			step: '01',
+			title: `${improvementAxes[0]?.label ?? '구성력'} 우선 보정`,
+			badge: improvementAxes[0]?.value ?? '우선 점검',
+			description:
+				improvementAxes[0] !== undefined
+					? `${selectedUniversity.label} 기준으로 가장 먼저 만져야 하는 축입니다. ${improvementAxes[0].label} 훈련 시간을 늘리고, 현재 강점인 ${stableAxes[0]?.label ?? '조형완성도'}은 같은 방식으로 유지하세요.`
+					: `${selectedUniversity.label} 기준으로 큰 약점은 적습니다. 현재 흐름을 무너뜨리지 않는 선에서 디테일 보정을 이어가면 됩니다.`
+		},
+		{
+			step: '02',
+			title: `${stableAxes[0]?.label ?? '조형완성도'} 강점 고정`,
+			badge: stableAxes[0]?.value ?? '강점 유지',
+			description: `${selectedUniversity.strengths[0]}를 시험장에서도 재현할 수 있게, 시작 20분 안에 가장 자신 있는 표현을 먼저 고정하는 루틴을 만드세요.`
+		},
+		{
+			step: '03',
+			title: '실전 제출 리허설',
+			badge: `${selectedUniversity.match}% 매칭`,
+			description: `${selectedUniversity.historyNotes[0]?.text ?? '최근 기조'}를 기준으로 1회분 완성 리허설을 돌리고, 마지막 10분에는 ${selectedUniversity.improvements[0] ?? '약점 축'}만 따로 체크하세요.`
+		}
+	]);
+
+	function setAllProSections(expanded: boolean) {
+		openProSections = {
+			fit: expanded,
+			strengths: expanded,
+			trend: expanded,
+			guides: expanded,
+			plan: expanded
+		};
+	}
+
+	function toggleProSection(section: ProSectionKey) {
+		openProSections = {
+			...openProSections,
+			[section]: !openProSections[section]
+		};
+	}
 
 	function updateQuery(next: { tier?: TierKey; uni?: UniversityKey; expert?: ExpertTab }) {
 		const nextPath = buildPathWithQuery(page.url.pathname, page.url.searchParams, {
@@ -90,6 +182,9 @@
 	}
 
 	function selectTier(nextTier: TierKey) {
+		if (nextTier === 'PRO') {
+			setAllProSections(true);
+		}
 		updateQuery({ tier: nextTier });
 	}
 
@@ -128,6 +223,7 @@
 		diagnosisData = createDiagnosisStubData(
 			`${file.name}:${file.size}:${file.lastModified}:${Date.now()}`
 		);
+		openProSections = createDefaultProSections();
 		stage = 'analyzing';
 
 		analyzingTimer = setTimeout(() => {
@@ -156,6 +252,7 @@
 		error = '';
 		selectedFile = null;
 		diagnosisData = createDiagnosisStubData('reset-demo');
+		openProSections = createDefaultProSections();
 		stage = 'upload';
 		updateQuery({ tier: 'FREE', uni: 'HONGIK', expert: 'AI' });
 	}
@@ -456,155 +553,333 @@
 									{/each}
 								</div>
 
-								<div>
-									<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">축별 합격 거리</h3>
-									<div class="mt-4 grid gap-4 md:grid-cols-4">
-										{#each selectedUniversity.axisDistances as axis}
-											<div class="rounded-[22px] border border-white/8 bg-night-900/70 p-4 text-center">
-												<div class="text-sm font-bold text-white/55">{axis.label}</div>
-												<div
-													class={`mt-3 inline-flex rounded-full px-3 py-1 text-sm font-black ${
-														axis.needImprovement
-															? 'bg-orange-500/16 text-orange-200'
-															: 'bg-emerald-500/14 text-emerald-200'
-													}`}
-												>
-													{axis.value}
-												</div>
-											</div>
-										{/each}
-									</div>
-								</div>
-
-								<div class="grid gap-6 md:grid-cols-2">
-									<div class="rounded-[24px] border border-blue-400/20 bg-blue-500/10 p-6">
-										<div class="mb-4 flex items-center gap-2 text-lg font-black text-blue-200">
-											<CheckCircle2 class="size-5" aria-hidden="true" />
-											강점
+								<div class="space-y-5 rounded-[28px] border border-white/8 bg-night-900/55 p-5 sm:p-6">
+									<div class="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+										<div>
+											<div class="text-xs font-black tracking-[0.24em] text-fuchsia-200/70 uppercase">Pro Briefing</div>
+											<h3 class="mt-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+												클릭해서 펼쳐보는 심층 정보
+											</h3>
+											<p class="soft-text mt-2 max-w-2xl">
+												필요한 카드만 눌러서 세부 분석을 열 수 있습니다. PRO 티어를 누르면 모든 카드가 바로 열립니다.
+											</p>
 										</div>
-										<ul class="space-y-2">
-											{#each selectedUniversity.strengths as item}
-												<li class="soft-text flex gap-3">
-													<span class="mt-2 size-1.5 rounded-full bg-blue-200" aria-hidden="true"></span>
-													<span>{item}</span>
-												</li>
-											{/each}
-										</ul>
-									</div>
-
-									<div class="rounded-[24px] border border-orange-400/20 bg-orange-500/10 p-6">
-										<div class="mb-4 flex items-center gap-2 text-lg font-black text-orange-200">
-											<AlertCircle class="size-5" aria-hidden="true" />
-											보완점
-										</div>
-										<ul class="space-y-2">
-											{#each selectedUniversity.improvements as item}
-												<li class="soft-text flex gap-3">
-													<span class="mt-2 size-1.5 rounded-full bg-orange-200" aria-hidden="true"></span>
-													<span>{item}</span>
-												</li>
-											{/each}
-										</ul>
-									</div>
-								</div>
-
-								<div>
-									<h3 class="inline-flex items-center gap-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
-										<TrendingUp class="size-5 text-fuchsia-300" aria-hidden="true" />
-										역대 기조 대비
-									</h3>
-
-									<div class="mt-4 space-y-4">
-										{#each selectedUniversity.historyNotes as note}
-											<div
-												class={`rounded-r-[22px] border-l-2 p-4 ${
-													note.tone === 'blue'
-														? 'border-blue-400 bg-blue-500/10'
-														: note.tone === 'gold'
-															? 'border-yellow-400 bg-yellow-500/10'
-															: 'border-rose-400 bg-rose-500/10'
-												}`}
-											>
-												<div class={`text-xs font-black ${note.tone === 'blue' ? 'text-blue-200' : note.tone === 'gold' ? 'text-yellow-200' : 'text-rose-200'}`}>
-													{note.label}
-												</div>
-												<p class="mt-2 text-sm font-medium leading-7 text-white/70">{note.text}</p>
-											</div>
-										{/each}
-									</div>
-
-									<div class="no-scrollbar mt-6 overflow-x-auto">
-										<table class="min-w-full border-collapse text-left text-sm">
-											<thead class="border-b border-white/8 bg-white/[0.03] text-white/42">
-												<tr>
-													<th class="px-4 py-3 font-bold">연도</th>
-													<th class="px-4 py-3 font-bold">구성력</th>
-													<th class="px-4 py-3 font-bold">명암/질감</th>
-													<th class="px-4 py-3 font-bold">조형완성도</th>
-													<th class="px-4 py-3 font-bold">주제해석</th>
-												</tr>
-											</thead>
-											<tbody>
-												{#each selectedUniversity.historyRows as row}
-													<tr class={`border-b border-white/8 ${row.isMine ? 'bg-fuchsia-500/10 text-white' : 'text-white/72'}`}>
-														<td class={`px-4 py-3 ${row.isMine ? 'font-black' : 'font-semibold'}`}>{row.year}</td>
-														{#each row.scores as score, scoreIndex}
-															<td class="px-4 py-3" style="font-variant-numeric: tabular-nums;">
-																<span class={`${row.isMine ? 'font-black' : 'font-semibold'}`}>{score}</span>
-																{#if !row.isMine}
-																	<span class={`ml-2 text-xs font-bold ${row.diffs[scoreIndex] >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
-																		{row.diffs[scoreIndex] > 0 ? `+${row.diffs[scoreIndex]}` : row.diffs[scoreIndex]}
-																	</span>
-																{/if}
-															</td>
-														{/each}
-													</tr>
-												{/each}
-											</tbody>
-										</table>
-									</div>
-								</div>
-
-								<div>
-									<h3 class="font-display text-2xl font-bold tracking-[-0.04em] text-white">맞춤 개선 가이드</h3>
-									<div class="mt-4 flex flex-wrap gap-2">
-										{#each expertGuideTabs as tab}
+										<div class="flex flex-wrap gap-2">
 											<button
 												type="button"
-												class={`rounded-2xl border px-4 py-2.5 text-sm font-bold transition-colors duration-200 ${
-													expertTab === tab.id
-														? 'border-fuchsia-400/40 bg-fuchsia-500/12 text-fuchsia-100'
-														: 'border-white/8 bg-white/[0.03] text-white/52 hover:bg-white/8 hover:text-white'
-												}`}
-												aria-pressed={expertTab === tab.id}
+												class="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-bold text-white transition-colors duration-200 hover:bg-white/10"
 												onclick={() => {
-													selectExpertGuide(tab.id);
+													setAllProSections(true);
 												}}
 											>
-												<span class="inline-flex items-center gap-2">
-													<tab.icon class="size-4" aria-hidden="true" />
-													{tab.label}
-												</span>
+												모두 열기
+											</button>
+											<button
+												type="button"
+												class="rounded-full border border-white/10 bg-white/[0.04] px-4 py-2 text-sm font-bold text-white/70 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+												onclick={() => {
+													setAllProSections(false);
+												}}
+											>
+												모두 접기
+											</button>
+										</div>
+									</div>
+
+									<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+										{#each proOverviewCards as section}
+											<button
+												type="button"
+												class={`rounded-[24px] border p-5 text-left transition-all duration-200 ${
+													openProSections[section.key]
+														? 'border-fuchsia-400/40 bg-fuchsia-500/12 shadow-[0_18px_40px_rgba(217,70,239,0.12)]'
+														: 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]'
+												}`}
+												aria-pressed={openProSections[section.key]}
+												onclick={() => {
+													toggleProSection(section.key);
+												}}
+											>
+												<div class="flex items-center justify-between gap-3">
+													<span class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] font-black tracking-[0.2em] text-white/55 uppercase">
+														{section.label}
+													</span>
+													<span class={`text-xs font-bold ${openProSections[section.key] ? 'text-fuchsia-100' : 'text-white/45'}`}>
+														{openProSections[section.key] ? '열림' : '닫힘'}
+													</span>
+												</div>
+												<h4 class="mt-4 font-display text-2xl font-black tracking-[-0.05em] text-white">
+													{section.title}
+												</h4>
+												<p class="mt-2 text-sm leading-6 text-white/62">{section.description}</p>
+												<div class="mt-4 text-sm font-bold text-fuchsia-200">{section.metric}</div>
 											</button>
 										{/each}
 									</div>
-
-									<div class="mt-6 grid gap-4">
-										{#each selectedUniversity.expertGuides[expertTab] as guide}
-											<div
-												class={`rounded-r-[22px] border-l-4 bg-white/[0.03] p-5 ${guide.needImprovement ? 'border-orange-400' : 'border-emerald-400'}`}
-											>
-												<div class="flex flex-wrap items-center justify-between gap-3">
-													<span class="text-lg font-bold text-white">{guide.axis}</span>
-													<span class={`rounded-full px-3 py-1 text-xs font-black ${guide.needImprovement ? 'bg-orange-500/16 text-orange-200' : 'bg-emerald-500/14 text-emerald-200'}`}>
-														{guide.status}
-													</span>
-												</div>
-												<p class="soft-text mt-3">{guide.text}</p>
-											</div>
-										{/each}
-									</div>
 								</div>
+
+								{#if openProSections.fit}
+									<section class="rounded-[28px] border border-white/8 bg-white/[0.03] p-6">
+										<div class="flex flex-wrap items-center justify-between gap-3">
+											<div>
+												<div class="text-xs font-black tracking-[0.22em] text-white/40 uppercase">Fit Map</div>
+												<h3 class="mt-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+													축별 합격 거리
+												</h3>
+											</div>
+											<button
+												type="button"
+												class="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/65 transition-colors duration-200 hover:bg-white/8 hover:text-white"
+												onclick={() => {
+													toggleProSection('fit');
+												}}
+											>
+												닫기
+											</button>
+										</div>
+										<div class="mt-5 grid gap-4 md:grid-cols-4">
+											{#each selectedUniversity.axisDistances as axis}
+												<div class="rounded-[22px] border border-white/8 bg-night-900/70 p-4 text-center">
+													<div class="text-sm font-bold text-white/55">{axis.label}</div>
+													<div
+														class={`mt-3 inline-flex rounded-full px-3 py-1 text-sm font-black ${
+															axis.needImprovement
+																? 'bg-orange-500/16 text-orange-200'
+																: 'bg-emerald-500/14 text-emerald-200'
+														}`}
+													>
+														{axis.value}
+													</div>
+												</div>
+											{/each}
+										</div>
+									</section>
+								{/if}
+
+								{#if openProSections.strengths}
+									<section class="rounded-[28px] border border-white/8 bg-white/[0.03] p-6">
+										<div class="flex flex-wrap items-center justify-between gap-3">
+											<div>
+												<div class="text-xs font-black tracking-[0.22em] text-white/40 uppercase">Review Notes</div>
+												<h3 class="mt-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+													강점과 보완점
+												</h3>
+											</div>
+											<button
+												type="button"
+												class="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/65 transition-colors duration-200 hover:bg-white/8 hover:text-white"
+												onclick={() => {
+													toggleProSection('strengths');
+												}}
+											>
+												닫기
+											</button>
+										</div>
+										<div class="mt-5 grid gap-6 md:grid-cols-2">
+											<div class="rounded-[24px] border border-blue-400/20 bg-blue-500/10 p-6">
+												<div class="mb-4 flex items-center gap-2 text-lg font-black text-blue-200">
+													<CheckCircle2 class="size-5" aria-hidden="true" />
+													강점
+												</div>
+												<ul class="space-y-2">
+													{#each selectedUniversity.strengths as item}
+														<li class="soft-text flex gap-3">
+															<span class="mt-2 size-1.5 rounded-full bg-blue-200" aria-hidden="true"></span>
+															<span>{item}</span>
+														</li>
+													{/each}
+												</ul>
+											</div>
+
+											<div class="rounded-[24px] border border-orange-400/20 bg-orange-500/10 p-6">
+												<div class="mb-4 flex items-center gap-2 text-lg font-black text-orange-200">
+													<AlertCircle class="size-5" aria-hidden="true" />
+													보완점
+												</div>
+												<ul class="space-y-2">
+													{#each selectedUniversity.improvements as item}
+														<li class="soft-text flex gap-3">
+															<span class="mt-2 size-1.5 rounded-full bg-orange-200" aria-hidden="true"></span>
+															<span>{item}</span>
+														</li>
+													{/each}
+												</ul>
+											</div>
+										</div>
+									</section>
+								{/if}
+
+								{#if openProSections.trend}
+									<section class="rounded-[28px] border border-white/8 bg-white/[0.03] p-6">
+										<div class="flex flex-wrap items-center justify-between gap-3">
+											<div>
+												<div class="text-xs font-black tracking-[0.22em] text-white/40 uppercase">Trend Desk</div>
+												<h3 class="mt-2 inline-flex items-center gap-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+													<TrendingUp class="size-5 text-fuchsia-300" aria-hidden="true" />
+													역대 기조 대비
+												</h3>
+											</div>
+											<button
+												type="button"
+												class="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/65 transition-colors duration-200 hover:bg-white/8 hover:text-white"
+												onclick={() => {
+													toggleProSection('trend');
+												}}
+											>
+												닫기
+											</button>
+										</div>
+
+										<div class="mt-5 space-y-4">
+											{#each selectedUniversity.historyNotes as note}
+												<div
+													class={`rounded-r-[22px] border-l-2 p-4 ${
+														note.tone === 'blue'
+															? 'border-blue-400 bg-blue-500/10'
+															: note.tone === 'gold'
+																? 'border-yellow-400 bg-yellow-500/10'
+																: 'border-rose-400 bg-rose-500/10'
+													}`}
+												>
+													<div class={`text-xs font-black ${note.tone === 'blue' ? 'text-blue-200' : note.tone === 'gold' ? 'text-yellow-200' : 'text-rose-200'}`}>
+														{note.label}
+													</div>
+													<p class="mt-2 text-sm font-medium leading-7 text-white/70">{note.text}</p>
+												</div>
+											{/each}
+										</div>
+
+										<div class="no-scrollbar mt-6 overflow-x-auto">
+											<table class="min-w-full border-collapse text-left text-sm">
+												<thead class="border-b border-white/8 bg-white/[0.03] text-white/42">
+													<tr>
+														<th class="px-4 py-3 font-bold">연도</th>
+														<th class="px-4 py-3 font-bold">구성력</th>
+														<th class="px-4 py-3 font-bold">명암/질감</th>
+														<th class="px-4 py-3 font-bold">조형완성도</th>
+														<th class="px-4 py-3 font-bold">주제해석</th>
+													</tr>
+												</thead>
+												<tbody>
+													{#each selectedUniversity.historyRows as row}
+														<tr class={`border-b border-white/8 ${row.isMine ? 'bg-fuchsia-500/10 text-white' : 'text-white/72'}`}>
+															<td class={`px-4 py-3 ${row.isMine ? 'font-black' : 'font-semibold'}`}>{row.year}</td>
+															{#each row.scores as score, scoreIndex}
+																<td class="px-4 py-3" style="font-variant-numeric: tabular-nums;">
+																	<span class={`${row.isMine ? 'font-black' : 'font-semibold'}`}>{score}</span>
+																	{#if !row.isMine}
+																		<span class={`ml-2 text-xs font-bold ${row.diffs[scoreIndex] >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+																			{row.diffs[scoreIndex] > 0 ? `+${row.diffs[scoreIndex]}` : row.diffs[scoreIndex]}
+																		</span>
+																	{/if}
+																</td>
+															{/each}
+														</tr>
+													{/each}
+												</tbody>
+											</table>
+										</div>
+									</section>
+								{/if}
+
+								{#if openProSections.guides}
+									<section class="rounded-[28px] border border-white/8 bg-white/[0.03] p-6">
+										<div class="flex flex-wrap items-center justify-between gap-3">
+											<div>
+												<div class="text-xs font-black tracking-[0.22em] text-white/40 uppercase">Guide Notes</div>
+												<h3 class="mt-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+													맞춤 개선 가이드
+												</h3>
+											</div>
+											<button
+												type="button"
+												class="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/65 transition-colors duration-200 hover:bg-white/8 hover:text-white"
+												onclick={() => {
+													toggleProSection('guides');
+												}}
+											>
+												닫기
+											</button>
+										</div>
+										<div class="mt-4 flex flex-wrap gap-2">
+											{#each expertGuideTabs as tab}
+												<button
+													type="button"
+													class={`rounded-2xl border px-4 py-2.5 text-sm font-bold transition-colors duration-200 ${
+														expertTab === tab.id
+															? 'border-fuchsia-400/40 bg-fuchsia-500/12 text-fuchsia-100'
+															: 'border-white/8 bg-white/[0.03] text-white/52 hover:bg-white/8 hover:text-white'
+													}`}
+													aria-pressed={expertTab === tab.id}
+													onclick={() => {
+														selectExpertGuide(tab.id);
+													}}
+												>
+													<span class="inline-flex items-center gap-2">
+														<tab.icon class="size-4" aria-hidden="true" />
+														{tab.label}
+													</span>
+												</button>
+											{/each}
+										</div>
+
+										<div class="mt-6 grid gap-4">
+											{#each selectedUniversity.expertGuides[expertTab] as guide}
+												<div
+													class={`rounded-r-[22px] border-l-4 bg-white/[0.03] p-5 ${guide.needImprovement ? 'border-orange-400' : 'border-emerald-400'}`}
+												>
+													<div class="flex flex-wrap items-center justify-between gap-3">
+														<span class="text-lg font-bold text-white">{guide.axis}</span>
+														<span class={`rounded-full px-3 py-1 text-xs font-black ${guide.needImprovement ? 'bg-orange-500/16 text-orange-200' : 'bg-emerald-500/14 text-emerald-200'}`}>
+															{guide.status}
+														</span>
+													</div>
+													<p class="soft-text mt-3">{guide.text}</p>
+												</div>
+											{/each}
+										</div>
+									</section>
+								{/if}
+
+								{#if openProSections.plan}
+									<section class="rounded-[28px] border border-white/8 bg-gradient-to-br from-fuchsia-500/12 via-white/[0.03] to-azure-500/12 p-6">
+										<div class="flex flex-wrap items-center justify-between gap-3">
+											<div>
+												<div class="text-xs font-black tracking-[0.22em] text-white/40 uppercase">Action Plan</div>
+												<h3 class="mt-2 font-display text-2xl font-bold tracking-[-0.04em] text-white">
+													실전 준비 루틴
+												</h3>
+											</div>
+											<button
+												type="button"
+												class="rounded-full border border-white/10 px-4 py-2 text-sm font-bold text-white/65 transition-colors duration-200 hover:bg-white/8 hover:text-white"
+												onclick={() => {
+													toggleProSection('plan');
+												}}
+											>
+												닫기
+											</button>
+										</div>
+										<div class="mt-5 grid gap-4 md:grid-cols-3">
+											{#each proActionPlan as item}
+												<div class="rounded-[24px] border border-white/10 bg-night-900/65 p-5">
+													<div class="flex items-center justify-between gap-3">
+														<span class="font-display text-2xl font-black tracking-[-0.05em] text-fuchsia-200">
+															{item.step}
+														</span>
+														<span class="rounded-full bg-white/[0.06] px-3 py-1 text-xs font-black text-white/65">
+															{item.badge}
+														</span>
+													</div>
+													<h4 class="mt-4 font-display text-xl font-bold tracking-[-0.04em] text-white">
+														{item.title}
+													</h4>
+													<p class="soft-text mt-3">{item.description}</p>
+												</div>
+											{/each}
+										</div>
+									</section>
+								{/if}
 							</div>
 						</GlassCard>
 
