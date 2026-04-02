@@ -50,6 +50,7 @@ class DinoV3Trainer:
         self.best_val_loss = math.inf
         self.best_selection_metric: float | None = None
         self.best_selection_metric_name: str | None = None
+        self.best_checkpoint_path: Path | None = None
         self.current_epoch = 0
         self.global_step = 0
         self.patience_counter = 0
@@ -124,6 +125,15 @@ class DinoV3Trainer:
             T_max=max(self.config.max_epochs, 1),
             eta_min=self.config.scheduler_eta_min,
         )
+
+    def _reset_optimization_state(self) -> None:
+        optimizer_groups = self._build_optimizer_groups()
+        self.optimizer = AdamW(optimizer_groups, weight_decay=self.config.weight_decay)
+        self.scheduler = self._build_scheduler()
+        self.scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16" and self.device.type == "cuda")
+        self.global_step = 0
+        self.patience_counter = 0
+        self.peak_vram_gb = 0.0
 
     def _autocast(self):
         if self.device.type != "cuda" or self.precision == "fp32":
@@ -249,7 +259,39 @@ class DinoV3Trainer:
         best_link = Path(self.config.checkpoint_dir) / "best_model.pt"
         best_link.unlink(missing_ok=True)
         best_link.symlink_to(checkpoint_path.name)
+        self.best_checkpoint_path = checkpoint_path.resolve()
         return best_link
+
+    def _resolve_best_checkpoint_path(self) -> Path | None:
+        best_link = Path(self.config.checkpoint_dir) / "best_model.pt"
+        if best_link.is_symlink():
+            resolved = best_link.resolve()
+            if resolved.exists():
+                return resolved
+        if self.best_checkpoint_path and self.best_checkpoint_path.exists():
+            return self.best_checkpoint_path
+        return None
+
+    def _restart_from_best_checkpoint(self) -> dict[str, Any] | None:
+        best_checkpoint_path = self._resolve_best_checkpoint_path()
+        if best_checkpoint_path is None:
+            return None
+        current_epoch = self.current_epoch
+        self._reset_optimization_state()
+        self.load_checkpoint(
+            str(best_checkpoint_path),
+            restore_optimizer_state=False,
+            restore_scheduler_state=False,
+            restore_global_step=False,
+            restore_patience=False,
+        )
+        self.current_epoch = current_epoch
+        self.best_checkpoint_path = best_checkpoint_path
+        return {
+            "trigger_epoch": current_epoch + 1,
+            "best_checkpoint": str(best_checkpoint_path),
+            "best_checkpoint_name": best_checkpoint_path.name,
+        }
 
     def load_checkpoint(
         self,
@@ -281,6 +323,11 @@ class DinoV3Trainer:
         else:
             self.patience_counter = 0
         self.peak_vram_gb = float(checkpoint.get("peak_vram_gb", 0.0))
+        best_link = Path(self.config.checkpoint_dir) / "best_model.pt"
+        if best_link.is_symlink():
+            resolved = best_link.resolve()
+            if resolved.exists():
+                self.best_checkpoint_path = resolved
 
     def _resolve_selection_metric(
         self,
@@ -317,6 +364,7 @@ class DinoV3Trainer:
         }
         latest_completed_checkpoint: Path | None = None
         latest_completed_metrics: dict[str, float] | None = None
+        restart_from_best_events: list[dict[str, Any]] = []
 
         if self.device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(self.device)
@@ -387,6 +435,14 @@ class DinoV3Trainer:
             if best_checkpoint_target is not None:
                 self.update_best_checkpoint_link(best_checkpoint_target)
 
+            if (
+                self.config.restart_from_best_patience > 0
+                and self.patience_counter >= self.config.restart_from_best_patience
+            ):
+                restart_event = self._restart_from_best_checkpoint()
+                if restart_event is not None:
+                    restart_from_best_events.append(restart_event)
+
             if self.patience_counter >= self.config.early_stopping_patience:
                 break
 
@@ -401,4 +457,5 @@ class DinoV3Trainer:
             "precision": self.precision,
             "latest_completed_checkpoint": str(latest_completed_checkpoint) if latest_completed_checkpoint else None,
             "latest_completed_metrics": latest_completed_metrics,
+            "restart_from_best_events": restart_from_best_events,
         }

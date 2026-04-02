@@ -56,6 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-persistent-workers", action="store_true")
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--early-stopping-metric", default="anchor_tier_accuracy", choices=["val_loss", "anchor_tier_accuracy"])
+    parser.add_argument("--restart-from-best-patience", type=int, default=0)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--precision", default="bf16", choices=["auto", "bf16", "fp16", "fp32"])
     parser.add_argument("--seed", type=int, default=42)
@@ -138,6 +139,7 @@ def main() -> int:
         warmup_epochs=args.warmup_epochs,
         early_stopping_patience=args.patience,
         early_stopping_metric=args.early_stopping_metric,
+        restart_from_best_patience=args.restart_from_best_patience,
         checkpoint_dir=args.output_dir,
         num_workers=args.num_workers,
         persistent_workers=not args.no_persistent_workers,

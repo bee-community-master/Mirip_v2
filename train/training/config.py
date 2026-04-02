@@ -29,6 +29,7 @@ class DinoV3TrainingConfig:
     early_stopping_patience: int = 8
     early_stopping_min_delta: float = 1e-4
     early_stopping_metric: str = "anchor_tier_accuracy"
+    restart_from_best_patience: int = 0
     gradient_clip_norm: float = 1.0
     scheduler_eta_min: float = 1e-6
     checkpoint_dir: str = field(default_factory=lambda: "output_models/checkpoints/dinov3_vit7b16")
@@ -72,6 +73,8 @@ class DinoV3TrainingConfig:
             raise ValueError("warmup_epochs must be non-negative")
         if self.early_stopping_patience <= 0:
             raise ValueError("early_stopping_patience must be positive")
+        if self.restart_from_best_patience < 0:
+            raise ValueError("restart_from_best_patience must be non-negative")
         if self.num_workers < 0:
             raise ValueError("num_workers must be non-negative")
         if self.prefetch_factor <= 0:

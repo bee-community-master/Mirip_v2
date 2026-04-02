@@ -358,6 +358,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("output_models/archive", command)
         self.assertIn("--epochs 30", command)
         self.assertIn("--warmup-epochs 2", command)
+        self.assertIn("--restart-from-best-patience 3", command)
         self.assertIn("--feature-pool cls_mean_patch_concat", command)
         self.assertIn("--freeze-backbone", command)
         self.assertIn("--postprocess-registry output_models/logs/dinov3_vit7b16_postprocess_registry.json", command)
