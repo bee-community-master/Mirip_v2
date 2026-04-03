@@ -9,8 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from training.postprocess_registry import PostprocessRecord, choose_best_record
+from training.postprocess_registry import PostprocessRecord
 from training.utils import read_json, resolve_project_path
+from training.winner_selection import NamedWinnerRecord, choose_named_winner, parse_named_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,25 +21,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-improvement", type=float, default=0.005)
     return parser.parse_args()
 
-
-def _parse_summary(value: str) -> tuple[str, Path]:
-    name, separator, raw_path = value.partition("=")
-    if not separator or not name or not raw_path:
-        raise SystemExit(f"Invalid summary value: {value!r}. Expected name=summary_path")
-    return name, resolve_project_path(raw_path)
-
-
-def _load_summary(name: str, summary_path: Path) -> tuple[str, dict[str, object], PostprocessRecord] | None:
+def _load_summary(name: str, summary_path) -> NamedWinnerRecord | None:
     payload = read_json(summary_path)
     winner_checkpoint = payload.get("winner_checkpoint")
     winner_report = payload.get("winner_report")
     winner_metrics = payload.get("winner_metrics")
     if not winner_checkpoint or not winner_report or not isinstance(winner_metrics, dict):
         return None
-    return name, payload, PostprocessRecord(
-        checkpoint_relative=str(winner_checkpoint),
-        report_relative=str(winner_report),
-        metrics=winner_metrics,
+    return NamedWinnerRecord(
+        name=name,
+        payload=payload,
+        record=PostprocessRecord(
+            checkpoint_relative=str(winner_checkpoint),
+            report_relative=str(winner_report),
+            metrics=winner_metrics,
+        ),
     )
 
 
@@ -46,48 +43,30 @@ def main() -> int:
     args = parse_args()
     summaries = []
     for raw_summary in args.summary:
-        parsed = _load_summary(*_parse_summary(raw_summary))
+        parsed = _load_summary(*parse_named_path(raw_summary, value_label="summary"))
         if parsed is not None:
             summaries.append(parsed)
-    if not summaries:
-        raise SystemExit("No valid summaries were provided.")
-
-    winner_name, winner_payload, winner_record = summaries[0]
-    decision_trace: list[dict[str, object]] = []
-
-    for name, payload, record in summaries[1:]:
-        selected, decision = choose_best_record(record, winner_record, min_improvement=args.min_improvement)
-        decision_trace.append(
-            {
-                "candidate": name,
-                "incumbent": winner_name,
-                "decision": decision,
-            }
-        )
-        if selected is record:
-            winner_name = name
-            winner_payload = payload
-            winner_record = record
+    winner, decision_trace = choose_named_winner(summaries, min_improvement=args.min_improvement)
 
     output_path = resolve_project_path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     result = {
-        "winner_name": winner_name,
-        "winner_checkpoint": winner_record.checkpoint_relative,
-        "winner_report": winner_record.report_relative,
-        "winner_metrics": winner_record.metric_snapshot,
-        "winner_config": winner_payload.get("winner_config", {}),
-        "winner_summary": winner_payload,
+        "winner_name": winner.name,
+        "winner_checkpoint": winner.record.checkpoint_relative,
+        "winner_report": winner.record.report_relative,
+        "winner_metrics": winner.record.metric_snapshot,
+        "winner_config": winner.payload.get("winner_config", {}),
+        "winner_summary": winner.payload,
         "decision_trace": decision_trace,
         "candidates": [
             {
-                "name": name,
-                "checkpoint": record.checkpoint_relative,
-                "report": record.report_relative,
-                "metrics": record.metric_snapshot,
-                "config": payload.get("winner_config", {}),
+                "name": candidate.name,
+                "checkpoint": candidate.record.checkpoint_relative,
+                "report": candidate.record.report_relative,
+                "metrics": candidate.record.metric_snapshot,
+                "config": candidate.payload.get("winner_config", {}),
             }
-            for name, payload, record in summaries
+            for candidate in summaries
         ],
     }
     output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
