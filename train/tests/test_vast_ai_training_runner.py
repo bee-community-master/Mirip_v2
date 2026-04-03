@@ -335,6 +335,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("reevaluate_checkpoint.py", command)
         self.assertIn("checkpoint_epoch_0010.pt", command)
         self.assertIn("epoch10_robust_baseline.json", command)
+        self.assertIn("[ ! -f train/training/data/pairs_val.csv ]", command)
+        self.assertIn("build_pairs.py", command)
 
     def test_frozen_ablation_stage_runs_probe_and_four_variants(self) -> None:
         command = vast_ai_training_runner.build_stage_command("frozen-ablation", "/workspace/mirip_v2")
@@ -351,6 +353,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("--warmup-epochs 1", command)
         self.assertIn("--freeze-backbone", command)
         self.assertIn("--anchor-eval-n-per-tier 24", command)
+        self.assertIn('find train/output_models/checkpoints/dinov3_vit7b16/ablation/F1 -maxdepth 1 -type f -name "checkpoint_epoch_*.pt"', command)
+        self.assertIn('ln -sfn "$(basename "$SELECTED_VARIANT_CHECKPOINT")" train/output_models/checkpoints/dinov3_vit7b16/ablation/F4/best_model.pt', command)
 
     def test_select_ablation_winner_stage_reads_frozen_variant_registries(self) -> None:
         command = vast_ai_training_runner.build_stage_command("select-ablation-winner", "/workspace/mirip_v2")
@@ -370,6 +374,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("--no-freeze-backbone", command)
         self.assertIn("ablation/U1", command)
         self.assertIn("ablation/U2", command)
+        self.assertIn('find train/output_models/checkpoints/dinov3_vit7b16/ablation/U1 -maxdepth 1 -type f -name "checkpoint_epoch_*.pt"', command)
 
     def test_select_overall_winner_stage_reads_frozen_and_unfreeze_summaries(self) -> None:
         command = vast_ai_training_runner.build_stage_command("select-overall-winner", "/workspace/mirip_v2")

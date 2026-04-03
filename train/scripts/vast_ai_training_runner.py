@@ -397,6 +397,16 @@ def _build_validate_upload_command(remote_root: str) -> str:
     return _bash_command(_validate_upload_parts(remote_root))
 
 
+def _prepare_training_data_parts(python_bin: str) -> list[str]:
+    return [
+        f"{python_bin} {TRAINING_DIR}/enrich_anchor_metadata.py --metadata-dir data/metadata --report {TRAIN_ANCHOR_ENRICHMENT_REPORT} --min-group-size 15 --apply",
+        f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH} --min-group-size 15",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {READINESS_REPORT_PATH}",
+        f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()}",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {PREPARED_READINESS_REPORT_PATH}",
+    ]
+
+
 def _tier_pair_quota_args() -> str:
     return " ".join(
         [
@@ -447,25 +457,52 @@ def _build_pairs_legacy_aligned_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/enrich_anchor_metadata.py --metadata-dir data/metadata --report {TRAIN_ANCHOR_ENRICHMENT_REPORT} --min-group-size 15 --apply",
-            f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH} --min-group-size 15",
-            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {READINESS_REPORT_PATH}",
-            f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()}",
-            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {PREPARED_READINESS_REPORT_PATH}",
+            *_prepare_training_data_parts(python_bin),
         ]
     )
 
 
 def _build_re_evaluate_baseline_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
+    required_prepared_paths = (
+        "train/training/data/pairs_val.csv",
+        "train/training/data/metadata_train.csv",
+        "train/training/data/metadata_val.csv",
+    )
     return _bash_command(
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
+            "if "
+            + " || ".join(f"[ ! -f {path} ]" for path in required_prepared_paths)
+            + "; then",
+            *[f"  {command}" for command in _prepare_training_data_parts(python_bin)],
+            "fi",
             f"mkdir -p {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
             f"{python_bin} {TRAINING_DIR}/reevaluate_checkpoint.py --checkpoint {TRAIN_BASELINE_CHECKPOINT} --pairs-val training/data/pairs_val.csv --metadata-train training/data/metadata_train.csv --metadata-eval training/data/metadata_val.csv --image-root data --anchors-output {TRAIN_BASELINE_ANCHORS} --output {TRAIN_BASELINE_REPORT} --batch-size 8 --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --device cuda --precision bf16",
         ]
     )
+
+
+def _build_variant_keep_best_only_parts(
+    remote_root: str,
+    *,
+    checkpoint_dir_file: str,
+    registry_report_file: str,
+) -> list[str]:
+    python_bin = _remote_python(remote_root)
+    selected_checkpoint = _json_value_command(
+        python_bin,
+        registry_report_file,
+        "payload.get('selected_best_checkpoint_after_compare')",
+        "selected best checkpoint missing from variant registry",
+    )
+    return [
+        f'SELECTED_VARIANT_CHECKPOINT_REL="{selected_checkpoint}"',
+        f'SELECTED_VARIANT_CHECKPOINT="{TRAIN_ROOT}/${{SELECTED_VARIANT_CHECKPOINT_REL}}"',
+        f'find {shlex.quote(checkpoint_dir_file)} -maxdepth 1 -type f -name "checkpoint_epoch_*.pt" ! -path "$SELECTED_VARIANT_CHECKPOINT" -delete',
+        f'ln -sfn "$(basename "$SELECTED_VARIANT_CHECKPOINT")" {shlex.quote(f"{checkpoint_dir_file}/best_model.pt")}',
+    ]
 
 
 def _build_frozen_ablation_command(remote_root: str) -> str:
@@ -503,6 +540,11 @@ def _build_frozen_ablation_command(remote_root: str) -> str:
                     report_file=probe_report_file,
                 ),
                 f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 6 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                *_build_variant_keep_best_only_parts(
+                    remote_root,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    registry_report_file=registry_report_file,
+                ),
             ]
         )
     return _bash_command(parts)
@@ -601,6 +643,11 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                     report_file=probe_report_file,
                 ),
                 f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --initialize-from \"$FROZEN_WINNER_CHECKPOINT\" --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                *_build_variant_keep_best_only_parts(
+                    remote_root,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    registry_report_file=registry_report_file,
+                ),
             ]
         )
     candidate_args = " ".join(
