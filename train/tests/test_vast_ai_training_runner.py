@@ -16,6 +16,18 @@ SPEC.loader.exec_module(vast_ai_training_runner)
 
 
 class VastAiTrainingRunnerTests(unittest.TestCase):
+    def test_re_evaluate_baseline_bootstraps_venv_when_missing(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("re-evaluate-baseline", "/workspace/mirip_v2")
+
+        bootstrap_fragment = "if [ ! -x /workspace/mirip_v2/.venv/bin/python ]; then"
+        create_venv_fragment = "python3 -m venv --system-site-packages .venv"
+        reevaluate_fragment = "reevaluate_checkpoint.py --checkpoint output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0010.pt"
+
+        self.assertIn(bootstrap_fragment, command)
+        self.assertIn(create_venv_fragment, command)
+        self.assertIn(reevaluate_fragment, command)
+        self.assertLess(command.index(bootstrap_fragment), command.index(reevaluate_fragment))
+
     def test_build_pairs_legacy_aligned_command_runs_enrichment_before_prepare_snapshot(self) -> None:
         command = vast_ai_training_runner.build_stage_command("build-pairs-legacy-aligned", "/workspace/mirip_v2")
 

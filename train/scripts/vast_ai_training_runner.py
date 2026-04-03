@@ -480,6 +480,9 @@ def _build_re_evaluate_baseline_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
+            f"if [ ! -x {shlex.quote(python_bin)} ]; then",
+            *[f"  {command}" for command in _bootstrap_parts(remote_root)],
+            "fi",
             "if "
             + " || ".join(f"[ ! -f {_remote_train_file(path)} ]" for path in required_prepared_paths)
             + "; then",
