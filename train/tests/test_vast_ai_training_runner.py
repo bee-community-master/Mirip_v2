@@ -335,7 +335,9 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("reevaluate_checkpoint.py", command)
         self.assertIn("checkpoint_epoch_0010.pt", command)
         self.assertIn("epoch10_robust_baseline.json", command)
-        self.assertIn("[ ! -f training/data/pairs_val.csv ]", command)
+        self.assertIn("[ ! -f train/training/data/pairs_val.csv ]", command)
+        self.assertIn("[ ! -f train/training/data/metadata_train.csv ]", command)
+        self.assertIn("[ ! -f train/training/data/metadata_val.csv ]", command)
         self.assertIn("build_pairs.py", command)
 
     def test_frozen_ablation_stage_runs_probe_and_four_variants(self) -> None:

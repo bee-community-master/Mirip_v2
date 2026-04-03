@@ -438,6 +438,10 @@ def _anchor_eval_args() -> str:
     )
 
 
+def _remote_train_file(path: str) -> str:
+    return f"{TRAIN_ROOT}/{path}"
+
+
 def _batch_probe_parts(remote_root: str, *, head_type: str, input_size: str | int, report_file: str) -> list[str]:
     python_bin = _remote_python(remote_root)
     return [
@@ -477,7 +481,7 @@ def _build_re_evaluate_baseline_command(remote_root: str) -> str:
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
             "if "
-            + " || ".join(f"[ ! -f {path} ]" for path in required_prepared_paths)
+            + " || ".join(f"[ ! -f {_remote_train_file(path)} ]" for path in required_prepared_paths)
             + "; then",
             *[f"  {command}" for command in _prepare_training_data_parts(python_bin)],
             "fi",
