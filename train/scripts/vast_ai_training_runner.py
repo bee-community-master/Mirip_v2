@@ -66,6 +66,9 @@ READINESS_REPORT_PATH = f"{REPORTS_REL_DIR}/readiness_report.json"
 SNAPSHOT_REPORT_PATH = f"{REPORTS_REL_DIR}/snapshot_report.json"
 PREPARED_READINESS_REPORT_PATH = f"{REPORTS_REL_DIR}/prepared_readiness_report.json"
 TRAIN_SNAPSHOT_MANIFEST = "training/data/snapshot_manifest.csv"
+TRAIN_PREPARED_PAIRS_VAL = "training/data/pairs_val.csv"
+TRAIN_PREPARED_METADATA_TRAIN = "training/data/metadata_train.csv"
+TRAIN_PREPARED_METADATA_VAL = "training/data/metadata_val.csv"
 TRAIN_FULL_TRAIN_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_train.json"
 TRAIN_FULL_TRAIN_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_full_train.json"
 TRAIN_FULL_CANDIDATE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_candidate.json"
@@ -465,9 +468,9 @@ def _build_pairs_legacy_aligned_command(remote_root: str) -> str:
 def _build_re_evaluate_baseline_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     required_prepared_paths = (
-        "train/training/data/pairs_val.csv",
-        "train/training/data/metadata_train.csv",
-        "train/training/data/metadata_val.csv",
+        TRAIN_PREPARED_PAIRS_VAL,
+        TRAIN_PREPARED_METADATA_TRAIN,
+        TRAIN_PREPARED_METADATA_VAL,
     )
     return _bash_command(
         [
@@ -485,12 +488,11 @@ def _build_re_evaluate_baseline_command(remote_root: str) -> str:
 
 
 def _build_variant_keep_best_only_parts(
-    remote_root: str,
+    python_bin: str,
     *,
     checkpoint_dir_file: str,
     registry_report_file: str,
 ) -> list[str]:
-    python_bin = _remote_python(remote_root)
     selected_checkpoint = _json_value_command(
         python_bin,
         registry_report_file,
@@ -541,7 +543,7 @@ def _build_frozen_ablation_command(remote_root: str) -> str:
                 ),
                 f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 6 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
                 *_build_variant_keep_best_only_parts(
-                    remote_root,
+                    python_bin,
                     checkpoint_dir_file=checkpoint_dir_file,
                     registry_report_file=registry_report_file,
                 ),
@@ -644,7 +646,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                 ),
                 f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --initialize-from \"$FROZEN_WINNER_CHECKPOINT\" --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
                 *_build_variant_keep_best_only_parts(
-                    remote_root,
+                    python_bin,
                     checkpoint_dir_file=checkpoint_dir_file,
                     registry_report_file=registry_report_file,
                 ),
