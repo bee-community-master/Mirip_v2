@@ -163,7 +163,7 @@ class TrainerPostprocessTests(unittest.TestCase):
 
             self.assertEqual(resumed.current_epoch, 2)
             self.assertEqual(resumed.best_selection_metric, 0.61)
-            self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy")
+            self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy_mean")
 
     def test_reset_training_state_on_resume_keeps_best_metric_but_clears_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -216,7 +216,7 @@ class TrainerPostprocessTests(unittest.TestCase):
 
             self.assertEqual(resumed.current_epoch, 2)
             self.assertEqual(resumed.best_selection_metric, 0.61)
-            self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy")
+            self.assertEqual(resumed.best_selection_metric_name, "anchor_tier_accuracy_mean")
             self.assertEqual(resumed.patience_counter, 0)
             self.assertEqual(resumed.global_step, 0)
             self.assertEqual(resumed.optimizer.state_dict()["state"], {})
@@ -259,6 +259,7 @@ class TrainerPostprocessTests(unittest.TestCase):
             self.assertEqual(len(summary["restart_from_best_events"]), 1)
             self.assertEqual(summary["restart_from_best_events"][0]["trigger_epoch"], 4)
             self.assertEqual(summary["restart_from_best_events"][0]["best_checkpoint_name"], "checkpoint_epoch_0001.pt")
+            self.assertEqual(summary["restart_from_best_events"][0]["selection_metric_name"], "anchor_tier_accuracy_mean")
             self.assertEqual(trainer.best_selection_metric, 0.61)
             self.assertEqual(trainer.patience_counter, 1)
             self.assertEqual(Path(temp_dir, "best_model.pt").readlink(), Path("checkpoint_epoch_0001.pt"))

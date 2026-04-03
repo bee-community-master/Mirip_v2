@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
+from math import sqrt
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +49,7 @@ def build_anchor_store(
     input_size: int,
     n_per_tier: int = 10,
     seed: int = 42,
+    group_balanced: bool = False,
     source_checkpoint: str | Path | None = None,
 ) -> AnchorStore:
     rows = load_metadata_rows(metadata_csv)
@@ -66,7 +68,12 @@ def build_anchor_store(
             tier_rows = grouped.get(tier, [])
             if not tier_rows:
                 continue
-            selected = tier_rows[:] if len(tier_rows) <= n_per_tier else rng.sample(tier_rows, n_per_tier)
+            selected = _select_anchor_rows(
+                tier_rows,
+                rng=rng,
+                n_per_tier=n_per_tier,
+                group_balanced=group_balanced,
+            )
             tier_features = []
             tier_paths = []
             for row in selected:
@@ -89,6 +96,7 @@ def build_anchor_store(
         image_paths=image_paths,
         metadata={
             "n_per_tier": n_per_tier,
+            "group_balanced": group_balanced,
             "model_name": model_name,
             "model_source": resolve_model_source(model_name),
             "seed": seed,
@@ -99,6 +107,40 @@ def build_anchor_store(
             "projector_output_dim": getattr(getattr(model, "score_head", [None])[0], "in_features", None),
         },
     )
+
+
+def _select_anchor_rows(
+    tier_rows: list[dict[str, str]],
+    *,
+    rng: random.Random,
+    n_per_tier: int,
+    group_balanced: bool,
+) -> list[dict[str, str]]:
+    if len(tier_rows) <= n_per_tier:
+        return list(tier_rows)
+    if not group_balanced:
+        return rng.sample(tier_rows, n_per_tier)
+
+    grouped_rows: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in tier_rows:
+        grouped_rows[row.get("anchor_group") or row["image_path"]].append(row)
+
+    group_keys = list(grouped_rows)
+    rng.shuffle(group_keys)
+    selected: list[dict[str, str]] = []
+    seen_paths: set[str] = set()
+
+    for group_key in group_keys:
+        row = rng.choice(grouped_rows[group_key])
+        selected.append(row)
+        seen_paths.add(row["image_path"])
+        if len(selected) >= n_per_tier:
+            return selected
+
+    remaining_rows = [row for row in tier_rows if row["image_path"] not in seen_paths]
+    rng.shuffle(remaining_rows)
+    selected.extend(remaining_rows[: max(n_per_tier - len(selected), 0)])
+    return selected[:n_per_tier]
 
 
 class TierRanker:
@@ -200,3 +242,132 @@ def evaluate_anchor_tier_accuracy(
             for tier, values in sorted(per_tier.items())
         },
     }
+
+
+def _evaluate_anchor_tier_accuracy_once(
+    *,
+    model: torch.nn.Module,
+    metadata_train_csv: str | Path,
+    metadata_eval_csv: str | Path,
+    image_root: str | Path,
+    model_name: str,
+    input_size: int,
+    n_per_tier: int,
+    seed: int,
+    precision: str,
+    group_balanced: bool,
+    source_checkpoint: str | Path | None = None,
+) -> tuple[AnchorStore, dict[str, Any]]:
+    anchors = build_anchor_store(
+        model=model,
+        metadata_csv=metadata_train_csv,
+        image_root=image_root,
+        model_name=model_name,
+        input_size=input_size,
+        n_per_tier=n_per_tier,
+        seed=seed,
+        group_balanced=group_balanced,
+        source_checkpoint=source_checkpoint,
+    )
+    metrics = evaluate_anchor_tier_accuracy(
+        model=model,
+        anchors=anchors,
+        metadata_csv=metadata_eval_csv,
+        image_root=image_root,
+        model_name=model_name,
+        input_size=input_size,
+        precision=precision,
+    )
+    return anchors, metrics
+
+
+def _aggregate_anchor_bootstrap_results(
+    per_seed_results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not per_seed_results:
+        raise ValueError("per_seed_results must not be empty")
+
+    accuracies = [float(result["anchor_tier_accuracy"]) for result in per_seed_results]
+    mean_accuracy = sum(accuracies) / len(accuracies)
+    total = int(per_seed_results[0]["anchor_tier_total"])
+    variance = sum((value - mean_accuracy) ** 2 for value in accuracies) / len(accuracies)
+
+    aggregated_per_tier: dict[str, dict[str, Any]] = {}
+    tier_names = sorted(
+        {
+            tier
+            for result in per_seed_results
+            for tier in result.get("anchor_tier_per_tier", {})
+        }
+    )
+    for tier in tier_names:
+        tier_entries = [result.get("anchor_tier_per_tier", {}).get(tier, {}) for result in per_seed_results]
+        total_for_tier = int(next((entry.get("total", 0) for entry in tier_entries if entry), 0))
+        tier_accuracies = [float(entry.get("accuracy", 0.0)) for entry in tier_entries]
+        mean_tier_accuracy = sum(tier_accuracies) / len(tier_accuracies)
+        aggregated_per_tier[tier] = {
+            "accuracy": mean_tier_accuracy,
+            "total": total_for_tier,
+            "correct": int(round(mean_tier_accuracy * total_for_tier)),
+        }
+
+    return {
+        "anchor_tier_accuracy": mean_accuracy,
+        "anchor_tier_accuracy_mean": mean_accuracy,
+        "anchor_tier_accuracy_std": sqrt(variance),
+        "anchor_tier_total": total,
+        "anchor_tier_correct": int(round(mean_accuracy * total)),
+        "anchor_tier_per_tier": aggregated_per_tier,
+        "anchor_tier_per_tier_mean": aggregated_per_tier,
+    }
+
+
+def evaluate_anchor_tier_accuracy_bootstrap(
+    *,
+    model: torch.nn.Module,
+    metadata_train_csv: str | Path,
+    metadata_eval_csv: str | Path,
+    image_root: str | Path,
+    model_name: str,
+    input_size: int,
+    n_per_tier: int,
+    seeds: list[int],
+    precision: str = "auto",
+    group_balanced: bool = False,
+    source_checkpoint: str | Path | None = None,
+) -> tuple[AnchorStore, dict[str, Any]]:
+    per_seed_payloads: list[dict[str, Any]] = []
+    primary_anchors: AnchorStore | None = None
+
+    for index, seed in enumerate(seeds):
+        anchors, metrics = _evaluate_anchor_tier_accuracy_once(
+            model=model,
+            metadata_train_csv=metadata_train_csv,
+            metadata_eval_csv=metadata_eval_csv,
+            image_root=image_root,
+            model_name=model_name,
+            input_size=input_size,
+            n_per_tier=n_per_tier,
+            seed=seed,
+            precision=precision,
+            group_balanced=group_balanced,
+            source_checkpoint=source_checkpoint,
+        )
+        if primary_anchors is None or index == 0:
+            primary_anchors = anchors
+        per_seed_payloads.append(
+            {
+                "seed": seed,
+                **metrics,
+            }
+        )
+
+    assert primary_anchors is not None
+    aggregated = _aggregate_anchor_bootstrap_results(per_seed_payloads)
+    aggregated["anchor_tier_accuracy_per_seed"] = per_seed_payloads
+    aggregated["anchor_eval_config"] = {
+        "n_per_tier": n_per_tier,
+        "seeds": list(seeds),
+        "group_balanced": group_balanced,
+    }
+    return primary_anchors, aggregated

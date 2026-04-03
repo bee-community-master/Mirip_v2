@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Select the best DINOv3 ablation run.")
     parser.add_argument("--candidate", action="append", required=True, help="Format: name=registry_path")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--min-improvement", type=float, default=0.005)
     return parser.parse_args()
 
 
@@ -51,7 +52,7 @@ def main() -> int:
     decision_trace: list[dict[str, object]] = []
 
     for name, payload, record in records[1:]:
-        selected, decision = choose_best_record(record, winner_record)
+        selected, decision = choose_best_record(record, winner_record, min_improvement=args.min_improvement)
         decision_trace.append(
             {
                 "candidate": name,

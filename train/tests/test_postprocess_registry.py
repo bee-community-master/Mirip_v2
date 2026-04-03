@@ -24,6 +24,7 @@ class PostprocessRegistryTests(unittest.TestCase):
                         "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0007.pt",
                         "metrics": {
                             "anchor_tier_accuracy": 0.72,
+                            "anchor_tier_accuracy_mean": 0.72,
                             "val_accuracy": 0.81,
                             "same_dept_accuracy": 0.79,
                             "val_loss": 0.44,
@@ -61,6 +62,7 @@ class PostprocessRegistryTests(unittest.TestCase):
                         "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
                         "metrics": {
                             "anchor_tier_accuracy": 0.71,
+                            "anchor_tier_accuracy_mean": 0.71,
                             "val_accuracy": 0.90,
                             "same_dept_accuracy": 0.82,
                             "val_loss": 0.30,
@@ -76,6 +78,7 @@ class PostprocessRegistryTests(unittest.TestCase):
                         "selected_best_report_after_compare": "output_models/logs/best.json",
                         "selected_best_metrics_after_compare": {
                             "anchor_tier_accuracy": 0.75,
+                            "anchor_tier_accuracy_mean": 0.75,
                             "val_accuracy": 0.80,
                             "same_dept_accuracy": 0.78,
                             "val_loss": 0.40,
@@ -103,7 +106,7 @@ class PostprocessRegistryTests(unittest.TestCase):
                     "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0008.pt",
                 ],
             )
-            self.assertEqual(payload["decision"]["criterion"], "anchor_tier_accuracy")
+            self.assertEqual(payload["decision"]["criterion"], "anchor_tier_accuracy_mean")
             self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
 
     def test_fallback_best_report_is_used_when_registry_is_missing(self) -> None:
@@ -119,6 +122,7 @@ class PostprocessRegistryTests(unittest.TestCase):
                         "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0001.pt",
                         "metrics": {
                             "anchor_tier_accuracy": 0.49,
+                            "anchor_tier_accuracy_mean": 0.49,
                             "val_accuracy": 0.70,
                             "same_dept_accuracy": 0.71,
                             "val_loss": 0.22,
@@ -133,6 +137,7 @@ class PostprocessRegistryTests(unittest.TestCase):
                         "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/smoke/best_model.pt",
                         "metrics": {
                             "anchor_tier_accuracy": 0.51,
+                            "anchor_tier_accuracy_mean": 0.51,
                             "val_accuracy": 0.69,
                             "same_dept_accuracy": 0.72,
                             "val_loss": 0.21,
@@ -166,6 +171,58 @@ class PostprocessRegistryTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(payload["decision"]["decision"], "incumbent_retained")
+
+    def test_minimum_improvement_uses_tiebreakers_when_anchor_gap_is_small(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            candidate_report = base / "candidate.json"
+            registry_path = base / "registry.json"
+
+            candidate_report.write_text(
+                json.dumps(
+                    {
+                        "checkpoint_relative": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0011.pt",
+                        "metrics": {
+                            "anchor_tier_accuracy": 0.532,
+                            "anchor_tier_accuracy_mean": 0.532,
+                            "val_accuracy": 0.88,
+                            "same_dept_accuracy": 0.83,
+                            "val_loss": 0.50,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            registry_path.write_text(
+                json.dumps(
+                    {
+                        "selected_best_checkpoint_after_compare": "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0010.pt",
+                        "selected_best_report_after_compare": "output_models/logs/best.json",
+                        "selected_best_metrics_after_compare": {
+                            "anchor_tier_accuracy": 0.5311,
+                            "anchor_tier_accuracy_mean": 0.5311,
+                            "val_accuracy": 0.87,
+                            "same_dept_accuracy": 0.82,
+                            "val_loss": 0.66,
+                            "epoch": 10,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            payload = update_postprocess_registry(
+                current_checkpoint="output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0011.pt",
+                current_report=candidate_report,
+                output_registry=registry_path,
+                min_improvement=0.005,
+            )
+
+            self.assertEqual(
+                payload["selected_best_checkpoint_after_compare"],
+                "output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0011.pt",
+            )
+            self.assertEqual(payload["decision"]["criterion"], "val_accuracy")
 
 
 if __name__ == "__main__":

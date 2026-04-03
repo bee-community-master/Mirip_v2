@@ -32,6 +32,10 @@ class DinoV3TrainingConfig:
     restart_from_best_patience: int = 0
     gradient_clip_norm: float = 1.0
     scheduler_eta_min: float = 1e-6
+    anchor_eval_n_per_tier: int = 24
+    anchor_eval_bootstrap_seeds: list[int] = field(default_factory=lambda: [42, 43, 44])
+    anchor_eval_min_improvement: float = 0.005
+    anchor_eval_group_balanced: bool = True
     checkpoint_dir: str = field(default_factory=lambda: "output_models/checkpoints/dinov3_vit7b16")
     save_every_n_epochs: int = 1
     num_workers: int = field(default_factory=default_num_workers)
@@ -75,6 +79,14 @@ class DinoV3TrainingConfig:
             raise ValueError("early_stopping_patience must be positive")
         if self.restart_from_best_patience < 0:
             raise ValueError("restart_from_best_patience must be non-negative")
+        if self.anchor_eval_n_per_tier <= 0:
+            raise ValueError("anchor_eval_n_per_tier must be positive")
+        if not self.anchor_eval_bootstrap_seeds:
+            raise ValueError("anchor_eval_bootstrap_seeds must not be empty")
+        if any(not isinstance(seed, int) for seed in self.anchor_eval_bootstrap_seeds):
+            raise ValueError("anchor_eval_bootstrap_seeds must contain integers")
+        if self.anchor_eval_min_improvement < 0:
+            raise ValueError("anchor_eval_min_improvement must be non-negative")
         if self.num_workers < 0:
             raise ValueError("num_workers must be non-negative")
         if self.prefetch_factor <= 0:

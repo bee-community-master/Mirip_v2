@@ -38,18 +38,17 @@ class PostprocessTests(unittest.TestCase):
 
             with (
                 mock.patch.object(postprocess_module, "load_checkpoint_model") as load_checkpoint_model,
-                mock.patch.object(postprocess_module, "build_anchor_store", return_value=anchor_store) as build_anchor_store,
+                mock.patch.object(
+                    postprocess_module,
+                    "evaluate_anchor_tier_accuracy_bootstrap",
+                    return_value=(anchor_store, {"anchor_tier_accuracy": 0.61, "anchor_tier_accuracy_mean": 0.61}),
+                ) as evaluate_anchor_tier_accuracy_bootstrap,
                 mock.patch.object(postprocess_module, "_build_evaluation_loader", return_value=object()) as build_loader,
                 mock.patch.object(
                     postprocess_module,
                     "evaluate_pairwise",
                     return_value={"val_loss": 0.2, "val_accuracy": 0.7, "same_dept_accuracy": 0.71},
                 ) as evaluate_pairwise,
-                mock.patch.object(
-                    postprocess_module,
-                    "evaluate_anchor_tier_accuracy",
-                    return_value={"anchor_tier_accuracy": 0.61},
-                ) as evaluate_anchor_tier_accuracy,
                 mock.patch.object(
                     postprocess_module,
                     "update_postprocess_registry",
@@ -76,16 +75,21 @@ class PostprocessTests(unittest.TestCase):
                 )
 
             load_checkpoint_model.assert_not_called()
-            build_anchor_store.assert_called_once_with(
+            evaluate_anchor_tier_accuracy_bootstrap.assert_called_once_with(
                 model=model,
-                metadata_csv="training/data/metadata_train.csv",
+                metadata_train_csv="training/data/metadata_train.csv",
+                metadata_eval_csv="training/data/metadata_val.csv",
                 image_root="data",
                 model_name="dummy-model",
                 input_size=448,
+                n_per_tier=24,
+                seeds=[42, 43, 44],
+                precision="fp32",
+                group_balanced=True,
+                source_checkpoint="output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0005.pt",
             )
             build_loader.assert_called_once()
             evaluate_pairwise.assert_called_once()
-            evaluate_anchor_tier_accuracy.assert_called_once()
             update_postprocess_registry.assert_called_once()
             self.assertEqual(result["registry"]["selected_best_checkpoint_after_compare"], "checkpoint_epoch_0005.pt")
 

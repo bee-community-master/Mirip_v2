@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from typing import Any, Callable
@@ -277,6 +278,7 @@ class DinoV3Trainer:
         if best_checkpoint_path is None:
             return None
         current_epoch = self.current_epoch
+        patience_counter_before_restart = self.patience_counter
         self._reset_optimization_state()
         self.load_checkpoint(
             str(best_checkpoint_path),
@@ -291,6 +293,7 @@ class DinoV3Trainer:
             "trigger_epoch": current_epoch + 1,
             "best_checkpoint": str(best_checkpoint_path),
             "best_checkpoint_name": best_checkpoint_path.name,
+            "patience_counter_before_restart": patience_counter_before_restart,
         }
 
     def load_checkpoint(
@@ -337,9 +340,15 @@ class DinoV3Trainer:
         if self.config.early_stopping_metric == "anchor_tier_accuracy" and postprocess_result:
             report = postprocess_result.get("report")
             report_metrics = report.get("metrics") if isinstance(report, dict) else None
-            metric_value = report_metrics.get("anchor_tier_accuracy") if isinstance(report_metrics, dict) else None
+            metric_value = (
+                report_metrics.get("anchor_tier_accuracy_mean")
+                if isinstance(report_metrics, dict)
+                else None
+            )
+            if metric_value is None and isinstance(report_metrics, dict):
+                metric_value = report_metrics.get("anchor_tier_accuracy")
             if metric_value is not None:
-                return "anchor_tier_accuracy", float(metric_value)
+                return "anchor_tier_accuracy_mean", float(metric_value)
         return "val_loss", float(validation_metrics["val_loss"])
 
     def _is_metric_improved(self, metric_name: str, candidate_value: float) -> bool:
@@ -409,7 +418,7 @@ class DinoV3Trainer:
             if post_epoch_callback is not None:
                 postprocess_result = post_epoch_callback(latest_completed_checkpoint, checkpoint_metrics)
             metric_name, selection_metric_value = self._resolve_selection_metric(metrics, postprocess_result)
-            if metric_name == "anchor_tier_accuracy":
+            if metric_name == "anchor_tier_accuracy_mean":
                 history["anchor_tier_accuracy"].append(selection_metric_value)
 
             current_best_val_loss = min(self.best_val_loss, metrics["val_loss"])
@@ -441,7 +450,19 @@ class DinoV3Trainer:
             ):
                 restart_event = self._restart_from_best_checkpoint()
                 if restart_event is not None:
+                    restart_event["selection_metric_name"] = metric_name
+                    restart_event["selection_metric_value"] = selection_metric_value
                     restart_from_best_events.append(restart_event)
+                    print(
+                        json.dumps(
+                            {
+                                "event": "restart_from_best",
+                                **restart_event,
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
 
             if self.patience_counter >= self.config.early_stopping_patience:
                 break

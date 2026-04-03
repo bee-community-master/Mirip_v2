@@ -35,7 +35,7 @@ CHECKPOINTS_REL_DIR = f"{OUTPUT_MODELS_REL_DIR}/checkpoints"
 ANCHORS_REL_DIR = f"{OUTPUT_MODELS_REL_DIR}/anchors"
 TRAIN_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
 TRAIN_MODEL_SLUG = "dinov3_vit7b16"
-TRAIN_INPUT_SIZE = 448
+TRAIN_DEFAULT_INPUT_SIZE = 256
 TRAIN_FEATURE_POOL = "cls_mean_patch_concat"
 TRAIN_EFFECTIVE_BATCH_SIZE = 64
 TRAIN_BATCH_SIZE_CANDIDATES = "8,6,4,2"
@@ -49,6 +49,19 @@ TRAIN_BUILD_PAIRS_MAX_APPEARANCES = 48
 TRAIN_DISTANCE1_RATIO = 0.6
 TRAIN_DISTANCE2_RATIO = 0.3
 TRAIN_DISTANCE3_RATIO = 0.1
+TRAIN_TIER_PAIR_MIN_AS = 4_000
+TRAIN_TIER_PAIR_MIN_BC = 4_000
+TRAIN_TIER_PAIR_MIN_AC = 3_000
+TRAIN_TIER_PAIR_MIN_CS = 3_000
+TRAIN_TIER_PAIR_CAP_AB = 18_000
+VAL_TIER_PAIR_MIN_AS = 400
+VAL_TIER_PAIR_MIN_BC = 400
+VAL_TIER_PAIR_MIN_AC = 300
+VAL_TIER_PAIR_MIN_CS = 300
+VAL_TIER_PAIR_CAP_AB = 2_250
+TRAIN_ANCHOR_EVAL_N_PER_TIER = 24
+TRAIN_ANCHOR_EVAL_BOOTSTRAP_SEEDS = "42,43,44"
+TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT = 0.005
 READINESS_REPORT_PATH = f"{REPORTS_REL_DIR}/readiness_report.json"
 SNAPSHOT_REPORT_PATH = f"{REPORTS_REL_DIR}/snapshot_report.json"
 PREPARED_READINESS_REPORT_PATH = f"{REPORTS_REL_DIR}/prepared_readiness_report.json"
@@ -69,6 +82,17 @@ TRAIN_FULL_FINAL_ANCHOR_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_anc
 TRAIN_FULL_FINAL_ANCHOR_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_full_anchors.json"
 TRAIN_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_summary.json"
 TRAIN_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_summary.json"
+TRAIN_FROZEN_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_frozen_ablation_summary.json"
+TRAIN_FROZEN_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_frozen_ablation_summary.json"
+TRAIN_UNFREEZE_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_unfreeze_ablation_summary.json"
+TRAIN_UNFREEZE_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_unfreeze_ablation_summary.json"
+TRAIN_OVERALL_WINNER_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_overall_winner.json"
+TRAIN_OVERALL_WINNER_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_overall_winner.json"
+TRAIN_BASELINE_CHECKPOINT = f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full/checkpoint_epoch_0010.pt"
+TRAIN_BASELINE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline.json"
+TRAIN_BASELINE_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline.json"
+TRAIN_BASELINE_ANCHORS = f"{ANCHORS_REL_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline_anchors.pt"
+TRAIN_BASELINE_ANCHORS_FILE = f"{TRAIN_ANCHORS_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline_anchors.pt"
 TRAIN_BATCH_PROBE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_batch_probe.json"
 TRAIN_BATCH_PROBE_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe.json"
 TRAIN_ANCHOR_ENRICHMENT_REPORT = f"{REPORTS_REL_DIR}/anchor_group_enrichment_report.json"
@@ -87,24 +111,46 @@ REMOTE_CHECKPOINT_ROOTS = (
     f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
     f"{LEGACY_CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
 )
-ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
+FROZEN_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
     {
-        "name": "A",
+        "name": "F1",
+        "input_size": 256,
         "head_type": "linear",
         "learning_rate": 1e-3,
         "weight_decay": 1e-3,
     },
     {
-        "name": "B",
+        "name": "F2",
+        "input_size": 256,
+        "head_type": "linear",
+        "learning_rate": 3e-4,
+        "weight_decay": 1e-4,
+    },
+    {
+        "name": "F3",
+        "input_size": 256,
         "head_type": "mlp_small",
         "learning_rate": 3e-4,
         "weight_decay": 1e-4,
     },
     {
-        "name": "C",
-        "head_type": "mlp_small",
-        "learning_rate": 1e-4,
-        "weight_decay": 1e-4,
+        "name": "F4",
+        "input_size": 320,
+        "head_type": "linear",
+        "learning_rate": 1e-3,
+        "weight_decay": 1e-3,
+    },
+)
+UNFREEZE_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
+    {
+        "name": "U1",
+        "unfreeze_last_n_layers": 2,
+        "backbone_learning_rate_scale": 0.05,
+    },
+    {
+        "name": "U2",
+        "unfreeze_last_n_layers": 4,
+        "backbone_learning_rate_scale": 0.02,
     },
 )
 
@@ -332,7 +378,7 @@ def _validate_upload_parts(remote_root: str) -> list[str]:
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {PREPARED_READINESS_REPORT_PATH}",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {PREPARED_READINESS_REPORT_PATH}",
     ]
 
 
@@ -340,11 +386,39 @@ def _build_validate_upload_command(remote_root: str) -> str:
     return _bash_command(_validate_upload_parts(remote_root))
 
 
-def _batch_probe_parts(remote_root: str, *, head_type: str, report_file: str) -> list[str]:
+def _tier_pair_quota_args() -> str:
+    return " ".join(
+        [
+            f"--train-tier-pair-min-a-s {TRAIN_TIER_PAIR_MIN_AS}",
+            f"--train-tier-pair-min-b-c {TRAIN_TIER_PAIR_MIN_BC}",
+            f"--train-tier-pair-min-a-c {TRAIN_TIER_PAIR_MIN_AC}",
+            f"--train-tier-pair-min-c-s {TRAIN_TIER_PAIR_MIN_CS}",
+            f"--train-tier-pair-cap-a-b {TRAIN_TIER_PAIR_CAP_AB}",
+            f"--val-tier-pair-min-a-s {VAL_TIER_PAIR_MIN_AS}",
+            f"--val-tier-pair-min-b-c {VAL_TIER_PAIR_MIN_BC}",
+            f"--val-tier-pair-min-a-c {VAL_TIER_PAIR_MIN_AC}",
+            f"--val-tier-pair-min-c-s {VAL_TIER_PAIR_MIN_CS}",
+            f"--val-tier-pair-cap-a-b {VAL_TIER_PAIR_CAP_AB}",
+        ]
+    )
+
+
+def _anchor_eval_args() -> str:
+    return " ".join(
+        [
+            f"--anchor-eval-n-per-tier {TRAIN_ANCHOR_EVAL_N_PER_TIER}",
+            f"--anchor-eval-bootstrap-seeds {TRAIN_ANCHOR_EVAL_BOOTSTRAP_SEEDS}",
+            f"--anchor-eval-min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT}",
+            "--anchor-eval-group-balanced",
+        ]
+    )
+
+
+def _batch_probe_parts(remote_root: str, *, head_type: str, input_size: str | int, report_file: str) -> list[str]:
     python_bin = _remote_python(remote_root)
     return [
         f"mkdir -p {TRAIN_REPORTS_DIR}",
-        f"{python_bin} {TRAINING_DIR}/probe_dinov3_batch_size.py --pairs-train training/data/pairs_train.csv --image-root data --model-name {shlex.quote(TRAIN_MODEL_NAME)} --input-size {TRAIN_INPUT_SIZE} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --dropout 0.1 --margin 0.3 --backbone-dtype auto --precision bf16 --batch-size-candidates {TRAIN_BATCH_SIZE_CANDIDATES} > {report_file}",
+        f"{python_bin} {TRAINING_DIR}/probe_dinov3_batch_size.py --pairs-train training/data/pairs_train.csv --image-root data --model-name {shlex.quote(TRAIN_MODEL_NAME)} --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --dropout 0.1 --margin 0.3 --backbone-dtype auto --precision bf16 --batch-size-candidates {TRAIN_BATCH_SIZE_CANDIDATES} > {report_file}",
         f'MICRO_BATCH="{_json_value_command(python_bin, report_file, "payload.get(\'selected_batch_size\')", "batch probe did not select a batch size")}"',
         f'GRAD_ACCUM=$((({TRAIN_EFFECTIVE_BATCH_SIZE} + MICRO_BATCH - 1) / MICRO_BATCH))',
     ]
@@ -358,27 +432,35 @@ def _build_pairs_legacy_aligned_command(remote_root: str) -> str:
             f"cd {shlex.quote(remote_root)}",
             f"{python_bin} {TRAINING_DIR}/enrich_anchor_metadata.py --metadata-dir data/metadata --report {TRAIN_ANCHOR_ENRICHMENT_REPORT} --min-group-size 15 --apply",
             f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH} --min-group-size 15",
-            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {READINESS_REPORT_PATH}",
-            f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO}",
-            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {PREPARED_READINESS_REPORT_PATH}",
+            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {READINESS_REPORT_PATH}",
+            f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()}",
+            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {PREPARED_READINESS_REPORT_PATH}",
         ]
     )
 
 
-def _build_ablation_command(remote_root: str) -> str:
+def _build_re_evaluate_baseline_command(remote_root: str) -> str:
+    python_bin = _remote_python(remote_root)
+    return _bash_command(
+        [
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
+            f"mkdir -p {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
+            f"{python_bin} {TRAINING_DIR}/reevaluate_checkpoint.py --checkpoint {TRAIN_BASELINE_CHECKPOINT} --pairs-val training/data/pairs_val.csv --metadata-train training/data/metadata_train.csv --metadata-eval training/data/metadata_val.csv --image-root data --anchors-output {TRAIN_BASELINE_ANCHORS} --output {TRAIN_BASELINE_REPORT} --batch-size 8 --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --device cuda --precision bf16",
+        ]
+    )
+
+
+def _build_frozen_ablation_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     parts = [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        * _batch_probe_parts(
-            remote_root,
-            head_type="mlp_small",
-            report_file=TRAIN_BATCH_PROBE_REPORT_FILE,
-        ),
         f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
     ]
-    for variant in ABLATION_VARIANTS:
+    for variant in FROZEN_ABLATION_VARIANTS:
         name = str(variant["name"])
+        input_size = int(variant["input_size"])
         head_type = str(variant["head_type"])
         learning_rate = float(variant["learning_rate"])
         weight_decay = float(variant["weight_decay"])
@@ -392,11 +474,18 @@ def _build_ablation_command(remote_root: str) -> str:
         anchors_path_file = f"{TRAIN_ANCHORS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate_anchors.pt"
         train_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
         train_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
+        probe_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe_{name}.json"
         parts.extend(
             [
                 f"rm -rf {checkpoint_dir_file}",
-                f"rm -f {candidate_report_file} {registry_report_file} {anchors_path_file} {train_report_file}",
-                f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 5 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {TRAIN_INPUT_SIZE} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --early-stopping-metric anchor_tier_accuracy --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                f"rm -f {candidate_report_file} {registry_report_file} {anchors_path_file} {train_report_file} {probe_report_file}",
+                *_batch_probe_parts(
+                    remote_root,
+                    head_type=head_type,
+                    input_size=input_size,
+                    report_file=probe_report_file,
+                ),
+                f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 6 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
             ]
         )
     return _bash_command(parts)
@@ -406,13 +495,84 @@ def _build_select_ablation_winner_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     candidate_args = " ".join(
         f"--candidate {variant['name']}={REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{variant['name']}_registry.json"
-        for variant in ABLATION_VARIANTS
+        for variant in FROZEN_ABLATION_VARIANTS
     )
     return _bash_command(
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/select_ablation_winner.py {candidate_args} --output {TRAIN_ABLATION_REPORT}",
+            f"{python_bin} {TRAINING_DIR}/select_ablation_winner.py {candidate_args} --min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT} --output {TRAIN_FROZEN_ABLATION_REPORT}",
+        ]
+    )
+
+
+def _build_unfreeze_ablation_command(remote_root: str) -> str:
+    python_bin = _remote_python(remote_root)
+    winner_metric = _json_value_command(
+        python_bin,
+        TRAIN_FROZEN_ABLATION_REPORT_FILE,
+        "payload.get('winner_metrics', {}).get('anchor_tier_accuracy_mean') or payload.get('winner_metrics', {}).get('anchor_tier_accuracy')",
+        "winner metric missing from frozen ablation report",
+    )
+    parts = [
+        "set -euo pipefail",
+        f"cd {shlex.quote(remote_root)}",
+        f'FROZEN_WINNER_METRIC="{winner_metric}"',
+        "python3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nvalue=float(os.environ['FROZEN_WINNER_METRIC'])\nout=Path('" + TRAIN_UNFREEZE_ABLATION_REPORT_FILE + "')\nout.parent.mkdir(parents=True, exist_ok=True)\nif value >= 0.56:\n    out.write_text(json.dumps({'skipped': True, 'reason': 'frozen_winner_meets_threshold', 'threshold': 0.56}, indent=2, ensure_ascii=False), encoding='utf-8')\nPY",
+        'if python3 - <<\'PY\'\nimport os,sys\nsys.exit(0 if float(os.environ["FROZEN_WINNER_METRIC"]) >= 0.56 else 1)\nPY\nthen exit 0; fi',
+        f'FROZEN_WINNER_CHECKPOINT="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_checkpoint\')", "frozen winner checkpoint missing")}"',
+        f'FROZEN_WINNER_HEAD_TYPE="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'head_type\')", "frozen winner head type missing")}"',
+        f'FROZEN_WINNER_INPUT_SIZE="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'input_size\')", "frozen winner input size missing")}"',
+        f'FROZEN_WINNER_LR="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'learning_rate\')", "frozen winner lr missing")}"',
+        f'FROZEN_WINNER_WEIGHT_DECAY="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'weight_decay\')", "frozen winner weight decay missing")}"',
+        'HALF_WINNER_LR="$(python3 - <<\'PY\'\nimport os\nprint(float(os.environ[\"FROZEN_WINNER_LR\"])/2.0)\nPY\n)"',
+        f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
+    ]
+    for variant in UNFREEZE_ABLATION_VARIANTS:
+        name = str(variant["name"])
+        unfreeze_last_n_layers = int(variant["unfreeze_last_n_layers"])
+        backbone_learning_rate_scale = float(variant["backbone_learning_rate_scale"])
+        checkpoint_dir = f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/ablation/{name}"
+        checkpoint_dir_file = f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation/{name}"
+        candidate_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate.json"
+        candidate_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate.json"
+        registry_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_registry.json"
+        registry_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_registry.json"
+        anchors_path = f"{ANCHORS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate_anchors.pt"
+        anchors_path_file = f"{TRAIN_ANCHORS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate_anchors.pt"
+        train_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
+        train_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
+        probe_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe_{name}.json"
+        parts.extend(
+            [
+                f"rm -rf {checkpoint_dir_file}",
+                f"rm -f {candidate_report_file} {registry_report_file} {anchors_path_file} {train_report_file} {probe_report_file}",
+                *_batch_probe_parts(
+                    remote_root,
+                    head_type="$FROZEN_WINNER_HEAD_TYPE",
+                    input_size="$FROZEN_WINNER_INPUT_SIZE",
+                    report_file=probe_report_file,
+                ),
+                f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --initialize-from \"$FROZEN_WINNER_CHECKPOINT\" --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+            ]
+        )
+    candidate_args = " ".join(
+        f"--candidate {variant['name']}={REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{variant['name']}_registry.json"
+        for variant in UNFREEZE_ABLATION_VARIANTS
+    )
+    parts.append(
+        f"{python_bin} {TRAINING_DIR}/select_ablation_winner.py {candidate_args} --min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT} --output {TRAIN_UNFREEZE_ABLATION_REPORT}"
+    )
+    return _bash_command(parts)
+
+
+def _build_select_overall_winner_command(remote_root: str) -> str:
+    python_bin = _remote_python(remote_root)
+    return _bash_command(
+        [
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
+            f"{python_bin} {TRAINING_DIR}/select_overall_winner.py --summary frozen={TRAIN_FROZEN_ABLATION_REPORT} --summary unfreeze={TRAIN_UNFREEZE_ABLATION_REPORT} --min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT} --output {TRAIN_OVERALL_WINNER_REPORT}",
         ]
     )
 
@@ -452,21 +612,45 @@ def _build_full_fresh_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     winner_head_type = _json_value_command(
         python_bin,
-        TRAIN_ABLATION_REPORT_FILE,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
         "payload.get('winner_config', {}).get('head_type')",
         "winner head type missing from ablation report",
     )
+    winner_input_size = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('input_size')",
+        "winner input size missing from overall winner report",
+    )
     winner_learning_rate = _json_value_command(
         python_bin,
-        TRAIN_ABLATION_REPORT_FILE,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
         "payload.get('winner_config', {}).get('learning_rate')",
         "winner learning rate missing from ablation report",
     )
     winner_weight_decay = _json_value_command(
         python_bin,
-        TRAIN_ABLATION_REPORT_FILE,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
         "payload.get('winner_config', {}).get('weight_decay')",
         "winner weight decay missing from ablation report",
+    )
+    winner_backbone_lr_scale = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('backbone_learning_rate_scale', 0.1)",
+        "winner backbone lr scale missing from overall winner report",
+    )
+    winner_freeze_backbone = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('freeze_backbone', True)",
+        "winner freeze_backbone missing from overall winner report",
+    )
+    winner_unfreeze_last_n_layers = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('unfreeze_last_n_layers', 0)",
+        "winner unfreeze depth missing from overall winner report",
     )
     selected_checkpoint_value = _json_value_command(
         python_bin,
@@ -479,15 +663,21 @@ def _build_full_fresh_command(remote_root: str) -> str:
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
             f'WINNER_HEAD_TYPE="{winner_head_type}"',
+            f'WINNER_INPUT_SIZE="{winner_input_size}"',
             f'WINNER_LR="{winner_learning_rate}"',
             f'WINNER_WEIGHT_DECAY="{winner_weight_decay}"',
+            f'WINNER_BACKBONE_LR_SCALE="{winner_backbone_lr_scale}"',
+            f'WINNER_FREEZE_BACKBONE="{winner_freeze_backbone}"',
+            f'WINNER_UNFREEZE_LAST_N_LAYERS="{winner_unfreeze_last_n_layers}"',
+            'if [ "$WINNER_FREEZE_BACKBONE" = "True" ] || [ "$WINNER_FREEZE_BACKBONE" = "true" ]; then FREEZE_FLAG="--freeze-backbone"; else FREEZE_FLAG="--no-freeze-backbone"; fi',
             * _batch_probe_parts(
                 remote_root,
                 head_type="$WINNER_HEAD_TYPE",
+                input_size="$WINNER_INPUT_SIZE",
                 report_file=TRAIN_BATCH_PROBE_REPORT_FILE,
             ),
             * _build_archive_reset_parts(),
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 30 --warmup-epochs 2 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$WINNER_LR\" --weight-decay \"$WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {TRAIN_INPUT_SIZE} --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$WINNER_HEAD_TYPE\" --freeze-backbone --unfreeze-last-n-layers 0 --patience 8 --restart-from-best-patience 3 --early-stopping-metric anchor_tier_accuracy --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
+            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 24 --warmup-epochs 2 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$WINNER_LR\" --weight-decay \"$WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale \"$WINNER_BACKBONE_LR_SCALE\" --dropout 0.1 --margin 0.3 --input-size \"$WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$WINNER_HEAD_TYPE\" $FREEZE_FLAG --unfreeze-last-n-layers \"$WINNER_UNFREEZE_LAST_N_LAYERS\" --patience 6 --restart-from-best-patience 3 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
             f'SELECTED_CHECKPOINT="{selected_checkpoint_value}"',
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --metadata training/data/metadata_train.csv --image-root data --output {TRAIN_FULL_FINAL_ANCHORS} --report {TRAIN_FULL_FINAL_ANCHOR_REPORT}",
             f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --pairs-val training/data/pairs_val.csv --image-root data --anchors {TRAIN_FULL_FINAL_ANCHORS} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output {TRAIN_FULL_FINAL_REPORT}",
@@ -502,10 +692,16 @@ def build_stage_command(stage: str, remote_root: str) -> str:
         return _build_validate_upload_command(remote_root)
     if stage == "build-pairs-legacy-aligned":
         return _build_pairs_legacy_aligned_command(remote_root)
-    if stage == "ablation":
-        return _build_ablation_command(remote_root)
+    if stage == "re-evaluate-baseline":
+        return _build_re_evaluate_baseline_command(remote_root)
+    if stage == "frozen-ablation":
+        return _build_frozen_ablation_command(remote_root)
     if stage == "select-ablation-winner":
         return _build_select_ablation_winner_command(remote_root)
+    if stage == "unfreeze-ablation":
+        return _build_unfreeze_ablation_command(remote_root)
+    if stage == "select-overall-winner":
+        return _build_select_overall_winner_command(remote_root)
     if stage == "full-fresh":
         return _build_full_fresh_command(remote_root)
     raise SystemExit(f"Unsupported stage: {stage}")
@@ -800,7 +996,17 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--config", default=TRAIN_CONFIG_PATH)
     common.add_argument(
         "--stage",
-        choices=["bootstrap", "validate-upload", "build-pairs-legacy-aligned", "ablation", "select-ablation-winner", "full-fresh"],
+        choices=[
+            "bootstrap",
+            "validate-upload",
+            "build-pairs-legacy-aligned",
+            "re-evaluate-baseline",
+            "frozen-ablation",
+            "select-ablation-winner",
+            "unfreeze-ablation",
+            "select-overall-winner",
+            "full-fresh",
+        ],
         required=True,
     )
 
