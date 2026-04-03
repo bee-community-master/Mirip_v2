@@ -326,6 +326,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("--distance1-ratio 0.6", command)
         self.assertIn("--train-tier-pair-min-a-s 4000", command)
         self.assertIn("--train-tier-pair-cap-a-b 18000", command)
+        self.assertIn("--allow-shortfall", command)
         self.assertIn("prepare_snapshot.py", command)
         self.assertIn("build_pairs.py", command)
 

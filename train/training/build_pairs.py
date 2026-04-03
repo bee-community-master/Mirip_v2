@@ -54,6 +54,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-tier-pair-cap-a-b", type=int, default=2_250)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--allow-shortfall", action="store_true")
     return parser.parse_args()
 
 
@@ -84,7 +85,7 @@ def main() -> int:
             train_tier_pair_caps=_tier_pair_caps("train", args),
             val_tier_pair_caps=_tier_pair_caps("val", args),
             seed=args.seed,
-            strict=True,
+            strict=not args.allow_shortfall,
         )
     except PairGenerationError as exc:
         print(json.dumps(exc.stats, indent=2, ensure_ascii=False))

@@ -109,6 +109,7 @@ class PairGenerationTests(unittest.TestCase):
         self.assertEqual(args.train_tier_pair_cap_a_b, 18_000)
         self.assertEqual(args.val_tier_pair_min_a_s, 400)
         self.assertEqual(args.val_tier_pair_cap_a_b, 2_250)
+        self.assertFalse(args.allow_shortfall)
 
     def test_readiness_cli_defaults_match_prepared_pair_targets(self) -> None:
         with mock.patch.object(sys, "argv", ["validate_training_readiness.py"]):
