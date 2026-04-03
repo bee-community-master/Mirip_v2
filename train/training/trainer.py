@@ -356,7 +356,31 @@ class DinoV3Trainer:
             return candidate_value < self.best_val_loss - self.config.early_stopping_min_delta
         if self.best_selection_metric is None:
             return True
-        return candidate_value > self.best_selection_metric + self.config.early_stopping_min_delta
+        return candidate_value > self.best_selection_metric + self.config.anchor_eval_min_improvement
+
+    def _resolve_registry_selection(
+        self,
+        postprocess_result: dict[str, Any] | None,
+        checkpoint_path: Path,
+    ) -> dict[str, Any] | None:
+        if not isinstance(postprocess_result, dict):
+            return None
+        registry = postprocess_result.get("registry")
+        if not isinstance(registry, dict):
+            return None
+        selected_checkpoint = registry.get("selected_best_checkpoint_after_compare")
+        if not selected_checkpoint:
+            return None
+        selected_metrics = registry.get("selected_best_metrics_after_compare")
+        if not isinstance(selected_metrics, dict):
+            selected_metrics = {}
+        metric_value = selected_metrics.get("anchor_tier_accuracy_mean")
+        if metric_value is None:
+            metric_value = selected_metrics.get("anchor_tier_accuracy")
+        return {
+            "selected_current": resolve_project_path(selected_checkpoint) == checkpoint_path.resolve(),
+            "selected_metric_value": float(metric_value) if metric_value is not None else None,
+        }
 
     def train(
         self,
@@ -418,16 +442,27 @@ class DinoV3Trainer:
             if post_epoch_callback is not None:
                 postprocess_result = post_epoch_callback(latest_completed_checkpoint, checkpoint_metrics)
             metric_name, selection_metric_value = self._resolve_selection_metric(metrics, postprocess_result)
+            registry_selection = None
+            if metric_name == "anchor_tier_accuracy_mean" and latest_completed_checkpoint is not None:
+                registry_selection = self._resolve_registry_selection(postprocess_result, latest_completed_checkpoint)
             if metric_name == "anchor_tier_accuracy_mean":
                 history["anchor_tier_accuracy"].append(selection_metric_value)
 
             current_best_val_loss = min(self.best_val_loss, metrics["val_loss"])
-            if self._is_metric_improved(metric_name, selection_metric_value):
+            if registry_selection is not None:
+                metric_improved = bool(registry_selection["selected_current"])
+                selected_metric_value = registry_selection.get("selected_metric_value")
+            else:
+                metric_improved = self._is_metric_improved(metric_name, selection_metric_value)
+                selected_metric_value = selection_metric_value
+            if metric_improved:
                 if metric_name == "val_loss":
                     self.best_val_loss = selection_metric_value
                     self.best_selection_metric_name = "val_loss"
                 else:
-                    self.best_selection_metric = selection_metric_value
+                    if selected_metric_value is None:
+                        selected_metric_value = selection_metric_value
+                    self.best_selection_metric = float(selected_metric_value)
                     self.best_selection_metric_name = metric_name
                     self.best_val_loss = current_best_val_loss
                 self.patience_counter = 0

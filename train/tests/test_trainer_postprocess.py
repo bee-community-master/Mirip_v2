@@ -264,6 +264,52 @@ class TrainerPostprocessTests(unittest.TestCase):
             self.assertEqual(trainer.patience_counter, 1)
             self.assertEqual(Path(temp_dir, "best_model.pt").readlink(), Path("checkpoint_epoch_0001.pt"))
 
+    def test_registry_incumbent_retained_keeps_best_link_and_patience(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            best_checkpoint = str(Path(temp_dir) / "checkpoint_epoch_0001.pt")
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=2,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+                early_stopping_metric="anchor_tier_accuracy",
+                early_stopping_patience=4,
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            callback_payloads = iter(
+                [
+                    {
+                        "report": {"metrics": {"anchor_tier_accuracy_mean": 0.5311}},
+                        "registry": {
+                            "selected_best_checkpoint_after_compare": best_checkpoint,
+                            "selected_best_metrics_after_compare": {"anchor_tier_accuracy_mean": 0.5311},
+                        },
+                    },
+                    {
+                        "report": {"metrics": {"anchor_tier_accuracy_mean": 0.5320}},
+                        "registry": {
+                            "selected_best_checkpoint_after_compare": best_checkpoint,
+                            "selected_best_metrics_after_compare": {"anchor_tier_accuracy_mean": 0.5311},
+                        },
+                    },
+                ]
+            )
+
+            def callback(_path: Path, _metrics: dict[str, float]) -> dict[str, object]:
+                return next(callback_payloads)
+
+            batch = self._single_batch()
+            trainer.train([batch], [batch], post_epoch_callback=callback)
+
+            self.assertEqual(trainer.best_selection_metric, 0.5311)
+            self.assertEqual(trainer.patience_counter, 1)
+            self.assertEqual(Path(temp_dir, "best_model.pt").readlink(), Path("checkpoint_epoch_0001.pt"))
+
     def test_val_loss_metric_saves_best_model_on_first_epoch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = DinoV3TrainingConfig(
