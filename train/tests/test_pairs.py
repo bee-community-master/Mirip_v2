@@ -127,6 +127,47 @@ class PairGenerationTests(unittest.TestCase):
         self.assertEqual(args.val_tier_pair_min_a_s, 400)
         self.assertEqual(args.val_tier_pair_cap_a_b, 2_250)
 
+    def test_readiness_shortfall_is_not_fatal_when_pairs_were_still_generated(self) -> None:
+        self.assertFalse(
+            readiness_module._pair_shortfall_is_fatal(
+                {
+                    "pair_shortfall": {
+                        "train": {"produced": 29112},
+                        "val": {"produced": 4302},
+                    }
+                }
+            )
+        )
+        self.assertTrue(
+            readiness_module._pair_shortfall_is_fatal(
+                {
+                    "pair_shortfall": {
+                        "train": {"produced": 0},
+                        "val": {"produced": 4302},
+                    }
+                }
+            )
+        )
+
+    def test_prepared_readiness_uses_baseline_produced_pair_count(self) -> None:
+        baseline_readiness = {
+            "pair_stats": {
+                "pair_shortfall": {
+                    "train": {"produced": 29112},
+                    "val": {"produced": 4302},
+                }
+            }
+        }
+
+        self.assertEqual(
+            readiness_module._expected_pair_rows(baseline_readiness, split="train", fallback_target=40_000),
+            29112,
+        )
+        self.assertEqual(
+            readiness_module._expected_pair_rows(baseline_readiness, split="val", fallback_target=5_000),
+            4302,
+        )
+
     def test_split_items_matches_current_snapshot_split_math(self) -> None:
         items = [_item(index, f"dept_{index % 8}", "A", 70.0) for index in range(1, 2737)]
 

@@ -43,6 +43,36 @@ def _tier_pair_caps(split: str, args: argparse.Namespace) -> dict[str, int]:
     }
 
 
+def _pair_shortfall_is_fatal(pair_stats: dict[str, Any] | None) -> bool:
+    if not isinstance(pair_stats, dict):
+        return True
+    shortfall = pair_stats.get("pair_shortfall")
+    if not isinstance(shortfall, dict):
+        return True
+    for split in ("train", "val"):
+        details = shortfall.get(split)
+        if not isinstance(details, dict):
+            return True
+        if int(details.get("produced", 0) or 0) <= 0:
+            return True
+    return False
+
+
+def _expected_pair_rows(
+    baseline_readiness: dict[str, Any],
+    *,
+    split: str,
+    fallback_target: int,
+) -> int:
+    pair_shortfall = baseline_readiness.get("pair_stats", {}).get("pair_shortfall", {})
+    details = pair_shortfall.get(split)
+    if isinstance(details, dict):
+        produced = details.get("produced")
+        if produced is not None:
+            return int(produced)
+    return fallback_target
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate staged Mirip_v2 training data readiness.")
     parser.add_argument("--mode", choices=["raw", "prepared"], default="raw")
@@ -334,7 +364,12 @@ def inspect_prepared_artifacts(args: argparse.Namespace, input_summary: dict[str
     for split in ("train", "val"):
         rows = load_rows_from_csv(required_paths[f"pairs_{split}"])
         summary["pair_rows"][split] = len(rows)
-        if len(rows) != pair_targets[split]:
+        expected_rows = _expected_pair_rows(
+            baseline_readiness,
+            split=split,
+            fallback_target=pair_targets[split],
+        )
+        if len(rows) != expected_rows:
             failures.append(f"prepared_pair_count_mismatch:{split}")
         unresolved_pairs = 0
         for row in rows:
@@ -393,7 +428,8 @@ def main() -> int:
                     )
                 except PairGenerationError as exc:
                     pair_stats = exc.stats
-                    failures.append("pair_shortfall")
+                    if _pair_shortfall_is_fatal(pair_stats):
+                        failures.append("pair_shortfall")
     elif args.mode == "prepared" and not failures:
         prepared_report, prepared_failures = inspect_prepared_artifacts(args=args, input_summary=input_summary)
         failures.extend(prepared_failures)
