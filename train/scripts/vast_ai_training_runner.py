@@ -345,6 +345,17 @@ def _json_value_command(python_bin: str, json_path: str, expression: str, error_
     return f"$({python_bin} -c {shlex.quote(script)})"
 
 
+def _json_env_assignment(
+    variable_name: str,
+    python_bin: str,
+    json_path: str,
+    expression: str,
+    error_message: str,
+) -> str:
+    value_command = _json_value_command(python_bin, json_path, expression, error_message)
+    return f'{variable_name}="{value_command}"'
+
+
 def _bootstrap_parts(remote_root: str) -> list[str]:
     return [
         "set -euo pipefail",
@@ -419,7 +430,13 @@ def _batch_probe_parts(remote_root: str, *, head_type: str, input_size: str | in
     return [
         f"mkdir -p {TRAIN_REPORTS_DIR}",
         f"{python_bin} {TRAINING_DIR}/probe_dinov3_batch_size.py --pairs-train training/data/pairs_train.csv --image-root data --model-name {shlex.quote(TRAIN_MODEL_NAME)} --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --dropout 0.1 --margin 0.3 --backbone-dtype auto --precision bf16 --batch-size-candidates {TRAIN_BATCH_SIZE_CANDIDATES} > {report_file}",
-        f'MICRO_BATCH="{_json_value_command(python_bin, report_file, "payload.get(\'selected_batch_size\')", "batch probe did not select a batch size")}"',
+        _json_env_assignment(
+            "MICRO_BATCH",
+            python_bin,
+            report_file,
+            "payload.get('selected_batch_size')",
+            "batch probe did not select a batch size",
+        ),
         f'GRAD_ACCUM=$((({TRAIN_EFFECTIVE_BATCH_SIZE} + MICRO_BATCH - 1) / MICRO_BATCH))',
     ]
 
@@ -520,11 +537,41 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
         f'FROZEN_WINNER_METRIC="{winner_metric}"',
         "python3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nvalue=float(os.environ['FROZEN_WINNER_METRIC'])\nout=Path('" + TRAIN_UNFREEZE_ABLATION_REPORT_FILE + "')\nout.parent.mkdir(parents=True, exist_ok=True)\nif value >= 0.56:\n    out.write_text(json.dumps({'skipped': True, 'reason': 'frozen_winner_meets_threshold', 'threshold': 0.56}, indent=2, ensure_ascii=False), encoding='utf-8')\nPY",
         'if python3 - <<\'PY\'\nimport os,sys\nsys.exit(0 if float(os.environ["FROZEN_WINNER_METRIC"]) >= 0.56 else 1)\nPY\nthen exit 0; fi',
-        f'FROZEN_WINNER_CHECKPOINT="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_checkpoint\')", "frozen winner checkpoint missing")}"',
-        f'FROZEN_WINNER_HEAD_TYPE="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'head_type\')", "frozen winner head type missing")}"',
-        f'FROZEN_WINNER_INPUT_SIZE="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'input_size\')", "frozen winner input size missing")}"',
-        f'FROZEN_WINNER_LR="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'learning_rate\')", "frozen winner lr missing")}"',
-        f'FROZEN_WINNER_WEIGHT_DECAY="{_json_value_command(python_bin, TRAIN_FROZEN_ABLATION_REPORT_FILE, "payload.get(\'winner_config\', {}).get(\'weight_decay\')", "frozen winner weight decay missing")}"',
+        _json_env_assignment(
+            "FROZEN_WINNER_CHECKPOINT",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_checkpoint')",
+            "frozen winner checkpoint missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_HEAD_TYPE",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('head_type')",
+            "frozen winner head type missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_INPUT_SIZE",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('input_size')",
+            "frozen winner input size missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_LR",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('learning_rate')",
+            "frozen winner lr missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_WEIGHT_DECAY",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('weight_decay')",
+            "frozen winner weight decay missing",
+        ),
         'HALF_WINNER_LR="$(python3 - <<\'PY\'\nimport os\nprint(float(os.environ[\"FROZEN_WINNER_LR\"])/2.0)\nPY\n)"',
         f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
     ]
