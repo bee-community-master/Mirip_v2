@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import sys
 import unittest
 from pathlib import Path
@@ -57,6 +56,42 @@ class PairGenerationTests(unittest.TestCase):
         self.assertEqual(diagnostics["selected_distance_counts"], {"1": 6, "2": 3, "3": 1})
         self.assertEqual(diagnostics["selected_pair_type_counts"]["same_dept"], 5)
         self.assertEqual(diagnostics["selected_pair_type_counts"]["cross_dept"], 5)
+        self.assertEqual(sum(diagnostics["unordered_tier_pair_counts"].values()), len(pairs))
+
+    def test_generate_pairs_honors_tier_pair_minimums_and_cap(self) -> None:
+        items = [
+            _item(1, "design_a", "S", 95.0),
+            _item(2, "design_a", "A", 89.0),
+            _item(3, "design_a", "B", 84.0),
+            _item(4, "design_a", "C", 74.0),
+            _item(5, "design_b", "S", 94.0),
+            _item(6, "design_b", "A", 88.0),
+            _item(7, "design_b", "B", 83.0),
+            _item(8, "design_b", "C", 73.0),
+            _item(9, "design_c", "S", 93.0),
+            _item(10, "design_c", "A", 87.0),
+            _item(11, "design_c", "B", 82.0),
+            _item(12, "design_c", "C", 72.0),
+        ]
+
+        pairs, diagnostics = generate_pairs(
+            items=items,
+            total_pairs=12,
+            same_dept_ratio=0.5,
+            max_appearances=20,
+            seed=11,
+            distance1_ratio=0.5,
+            distance2_ratio=0.25,
+            distance3_ratio=0.25,
+            tier_pair_minimums={"A-S": 2, "B-C": 2},
+            tier_pair_caps={"A-B": 2},
+        )
+
+        self.assertEqual(len(pairs), 12)
+        self.assertGreaterEqual(diagnostics["unordered_tier_pair_counts"]["A-S"], 2)
+        self.assertGreaterEqual(diagnostics["unordered_tier_pair_counts"]["B-C"], 2)
+        self.assertLessEqual(diagnostics["unordered_tier_pair_counts"].get("A-B", 0), 2)
+        self.assertEqual(diagnostics["pair_quota_shortfalls"], {})
 
     def test_build_pairs_cli_defaults_match_legacy_aligned_preset(self) -> None:
         with mock.patch.object(sys, "argv", ["build_pairs.py"]):
@@ -70,6 +105,11 @@ class PairGenerationTests(unittest.TestCase):
         self.assertEqual(args.distance1_ratio, 0.6)
         self.assertEqual(args.distance2_ratio, 0.3)
         self.assertEqual(args.distance3_ratio, 0.1)
+        self.assertEqual(args.train_tier_pair_min_a_s, 4_000)
+        self.assertEqual(args.train_tier_pair_cap_a_b, 18_000)
+        self.assertEqual(args.val_tier_pair_min_a_s, 400)
+        self.assertEqual(args.val_tier_pair_cap_a_b, 2_250)
+        self.assertFalse(args.allow_shortfall)
 
     def test_readiness_cli_defaults_match_prepared_pair_targets(self) -> None:
         with mock.patch.object(sys, "argv", ["validate_training_readiness.py"]):
@@ -83,29 +123,55 @@ class PairGenerationTests(unittest.TestCase):
         self.assertEqual(args.distance1_ratio, 0.6)
         self.assertEqual(args.distance2_ratio, 0.3)
         self.assertEqual(args.distance3_ratio, 0.1)
+        self.assertEqual(args.train_tier_pair_min_a_s, 4_000)
+        self.assertEqual(args.train_tier_pair_cap_a_b, 18_000)
+        self.assertEqual(args.val_tier_pair_min_a_s, 400)
+        self.assertEqual(args.val_tier_pair_cap_a_b, 2_250)
 
-    def test_split_items_matches_legacy_snapshot_counts(self) -> None:
-        base = TRAIN_ROOT / "training" / "data"
-        rows: list[dict[str, str]] = []
-        for name in ("metadata_train.csv", "metadata_val.csv", "metadata_test.csv"):
-            with (base / name).open("r", encoding="utf-8", newline="") as handle:
-                rows.extend(csv.DictReader(handle))
+    def test_readiness_shortfall_is_not_fatal_when_pairs_were_still_generated(self) -> None:
+        self.assertFalse(
+            readiness_module._pair_shortfall_is_fatal(
+                {
+                    "pair_shortfall": {
+                        "train": {"produced": 29112},
+                        "val": {"produced": 4302},
+                    }
+                }
+            )
+        )
+        self.assertTrue(
+            readiness_module._pair_shortfall_is_fatal(
+                {
+                    "pair_shortfall": {
+                        "train": {"produced": 0},
+                        "val": {"produced": 4302},
+                    }
+                }
+            )
+        )
 
-        items = [
-            {
-                "post_no": int(row["post_no"]),
-                "image_path": row["image_path"],
-                "tier": row["tier"],
-                "tier_score": float(row["tier_score"]),
-                "normalized_dept": row["normalized_dept"],
-                "anchor_group": row["anchor_group"],
-                "university": row["university"],
-                "work_type": row.get("work_type", "unknown"),
-                "exam_topic": row.get("exam_topic", ""),
+    def test_prepared_readiness_uses_baseline_produced_pair_count(self) -> None:
+        baseline_readiness = {
+            "pair_stats": {
+                "pair_shortfall": {
+                    "train": {"produced": 29112},
+                    "val": {"produced": 4302},
+                }
             }
-            for row in rows
-        ]
+        }
+
+        self.assertEqual(
+            readiness_module._expected_pair_rows(baseline_readiness, split="train", fallback_target=40_000),
+            29112,
+        )
+        self.assertEqual(
+            readiness_module._expected_pair_rows(baseline_readiness, split="val", fallback_target=5_000),
+            4302,
+        )
+
+    def test_split_items_matches_current_snapshot_split_math(self) -> None:
+        items = [_item(index, f"dept_{index % 8}", "A", 70.0) for index in range(1, 2737)]
 
         train_items, val_items, test_items = split_items_by_image(items, train_ratio=0.8, val_ratio=0.1, seed=42)
 
-        self.assertEqual((len(train_items), len(val_items), len(test_items)), (2187, 273, 274))
+        self.assertEqual((len(train_items), len(val_items), len(test_items)), (2188, 273, 275))

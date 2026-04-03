@@ -23,8 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--metadata", required=True)
     parser.add_argument("--image-root", required=True)
     parser.add_argument("--output", required=True)
-    parser.add_argument("--n-per-tier", type=int, default=10)
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--n-per-tier", type=int)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--group-balanced", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--report")
     return parser.parse_args()
@@ -54,8 +55,13 @@ def main() -> int:
         image_root=args.image_root,
         model_name=config_dict.get("model_name", DEFAULT_DINOV3_MODEL_NAME),
         input_size=int(config_dict.get("input_size", 448)),
-        n_per_tier=args.n_per_tier,
-        seed=args.seed,
+        n_per_tier=int(args.n_per_tier or config_dict.get("anchor_eval_n_per_tier", 24)),
+        seed=int(args.seed or (config_dict.get("anchor_eval_bootstrap_seeds") or [42])[0]),
+        group_balanced=bool(
+            config_dict.get("anchor_eval_group_balanced", True)
+            if args.group_balanced is None
+            else args.group_balanced
+        ),
         source_checkpoint=args.checkpoint,
     )
     output_path = anchors.save(args.output)

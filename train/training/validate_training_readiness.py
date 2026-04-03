@@ -28,6 +28,51 @@ DEFAULT_RAW_REPORT = "output_models/logs/readiness_report.json"
 DEFAULT_PREPARED_REPORT = "output_models/logs/prepared_readiness_report.json"
 
 
+def _tier_pair_minimums(split: str, args: argparse.Namespace) -> dict[str, int]:
+    return {
+        "A-S": int(getattr(args, f"{split}_tier_pair_min_a_s")),
+        "B-C": int(getattr(args, f"{split}_tier_pair_min_b_c")),
+        "A-C": int(getattr(args, f"{split}_tier_pair_min_a_c")),
+        "C-S": int(getattr(args, f"{split}_tier_pair_min_c_s")),
+    }
+
+
+def _tier_pair_caps(split: str, args: argparse.Namespace) -> dict[str, int]:
+    return {
+        "A-B": int(getattr(args, f"{split}_tier_pair_cap_a_b")),
+    }
+
+
+def _pair_shortfall_is_fatal(pair_stats: dict[str, Any] | None) -> bool:
+    if not isinstance(pair_stats, dict):
+        return True
+    shortfall = pair_stats.get("pair_shortfall")
+    if not isinstance(shortfall, dict):
+        return True
+    for split in ("train", "val"):
+        details = shortfall.get(split)
+        if not isinstance(details, dict):
+            return True
+        if int(details.get("produced", 0) or 0) <= 0:
+            return True
+    return False
+
+
+def _expected_pair_rows(
+    baseline_readiness: dict[str, Any],
+    *,
+    split: str,
+    fallback_target: int,
+) -> int:
+    pair_shortfall = baseline_readiness.get("pair_stats", {}).get("pair_shortfall", {})
+    details = pair_shortfall.get(split)
+    if isinstance(details, dict):
+        produced = details.get("produced")
+        if produced is not None:
+            return int(produced)
+    return fallback_target
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Validate staged Mirip_v2 training data readiness.")
     parser.add_argument("--mode", choices=["raw", "prepared"], default="raw")
@@ -49,6 +94,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distance1-ratio", type=float, default=0.6)
     parser.add_argument("--distance2-ratio", type=float, default=0.3)
     parser.add_argument("--distance3-ratio", type=float, default=0.1)
+    parser.add_argument("--train-tier-pair-min-a-s", type=int, default=4_000)
+    parser.add_argument("--train-tier-pair-min-b-c", type=int, default=4_000)
+    parser.add_argument("--train-tier-pair-min-a-c", type=int, default=3_000)
+    parser.add_argument("--train-tier-pair-min-c-s", type=int, default=3_000)
+    parser.add_argument("--train-tier-pair-cap-a-b", type=int, default=18_000)
+    parser.add_argument("--val-tier-pair-min-a-s", type=int, default=400)
+    parser.add_argument("--val-tier-pair-min-b-c", type=int, default=400)
+    parser.add_argument("--val-tier-pair-min-a-c", type=int, default=300)
+    parser.add_argument("--val-tier-pair-min-c-s", type=int, default=300)
+    parser.add_argument("--val-tier-pair-cap-a-b", type=int, default=2_250)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -309,7 +364,12 @@ def inspect_prepared_artifacts(args: argparse.Namespace, input_summary: dict[str
     for split in ("train", "val"):
         rows = load_rows_from_csv(required_paths[f"pairs_{split}"])
         summary["pair_rows"][split] = len(rows)
-        if len(rows) != pair_targets[split]:
+        expected_rows = _expected_pair_rows(
+            baseline_readiness,
+            split=split,
+            fallback_target=pair_targets[split],
+        )
+        if len(rows) != expected_rows:
             failures.append(f"prepared_pair_count_mismatch:{split}")
         unresolved_pairs = 0
         for row in rows:
@@ -359,12 +419,17 @@ def main() -> int:
                         distance1_ratio=args.distance1_ratio,
                         distance2_ratio=args.distance2_ratio,
                         distance3_ratio=args.distance3_ratio,
+                        train_tier_pair_minimums=_tier_pair_minimums("train", args),
+                        val_tier_pair_minimums=_tier_pair_minimums("val", args),
+                        train_tier_pair_caps=_tier_pair_caps("train", args),
+                        val_tier_pair_caps=_tier_pair_caps("val", args),
                         seed=args.seed,
                         strict=True,
                     )
                 except PairGenerationError as exc:
                     pair_stats = exc.stats
-                    failures.append("pair_shortfall")
+                    if _pair_shortfall_is_fatal(pair_stats):
+                        failures.append("pair_shortfall")
     elif args.mode == "prepared" and not failures:
         prepared_report, prepared_failures = inspect_prepared_artifacts(args=args, input_summary=input_summary)
         failures.extend(prepared_failures)

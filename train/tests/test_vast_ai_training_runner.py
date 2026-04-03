@@ -16,6 +16,28 @@ SPEC.loader.exec_module(vast_ai_training_runner)
 
 
 class VastAiTrainingRunnerTests(unittest.TestCase):
+    def test_re_evaluate_baseline_bootstraps_venv_when_missing(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("re-evaluate-baseline", "/workspace/mirip_v2")
+
+        bootstrap_fragment = "if [ ! -x /workspace/mirip_v2/.venv/bin/python ]; then"
+        create_venv_fragment = "python3 -m venv --system-site-packages .venv"
+        reevaluate_fragment = "reevaluate_checkpoint.py --checkpoint output_models/checkpoints/dinov3_vit7b16/full/checkpoint_epoch_0010.pt"
+
+        self.assertIn(bootstrap_fragment, command)
+        self.assertIn(create_venv_fragment, command)
+        self.assertIn(reevaluate_fragment, command)
+        self.assertLess(command.index(bootstrap_fragment), command.index(reevaluate_fragment))
+
+    def test_build_pairs_legacy_aligned_command_runs_enrichment_before_prepare_snapshot(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("build-pairs-legacy-aligned", "/workspace/mirip_v2")
+
+        enrichment_fragment = "enrich_anchor_metadata.py --metadata-dir data/metadata --report output_models/logs/anchor_group_enrichment_report.json --min-group-size 15 --apply"
+        prepare_fragment = "prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest training/data/snapshot_manifest.csv --report output_models/logs/snapshot_report.json --min-group-size 15"
+
+        self.assertIn(enrichment_fragment, command)
+        self.assertIn(prepare_fragment, command)
+        self.assertLess(command.index(enrichment_fragment), command.index(prepare_fragment))
+
     def test_load_env_file_sets_instance_id_without_overwriting_existing_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"
@@ -314,42 +336,80 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("--val-pairs-target 5000", command)
         self.assertIn("--max-appearances 48", command)
         self.assertIn("--distance1-ratio 0.6", command)
+        self.assertIn("--train-tier-pair-min-a-s 4000", command)
+        self.assertIn("--train-tier-pair-cap-a-b 18000", command)
+        self.assertIn("--allow-shortfall", command)
         self.assertIn("prepare_snapshot.py", command)
         self.assertIn("build_pairs.py", command)
 
-    def test_ablation_stage_command_runs_probe_and_three_variants(self) -> None:
-        command = vast_ai_training_runner.build_stage_command("ablation", "/workspace/mirip_v2")
+    def test_re_evaluate_baseline_stage_generates_epoch10_report(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("re-evaluate-baseline", "/workspace/mirip_v2")
+
+        self.assertIn("reevaluate_checkpoint.py", command)
+        self.assertIn("checkpoint_epoch_0010.pt", command)
+        self.assertIn("epoch10_robust_baseline.json", command)
+        self.assertIn("[ ! -f train/training/data/pairs_val.csv ]", command)
+        self.assertIn("[ ! -f train/training/data/metadata_train.csv ]", command)
+        self.assertIn("[ ! -f train/training/data/metadata_val.csv ]", command)
+        self.assertIn("build_pairs.py", command)
+
+    def test_frozen_ablation_stage_runs_probe_and_four_variants(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("frozen-ablation", "/workspace/mirip_v2")
 
         self.assertIn("probe_dinov3_batch_size.py", command)
         self.assertIn("--batch-size-candidates 8,6,4,2", command)
-        self.assertIn("ablation/A", command)
-        self.assertIn("ablation/B", command)
-        self.assertIn("ablation/C", command)
+        self.assertIn("ablation/F1", command)
+        self.assertIn("ablation/F2", command)
+        self.assertIn("ablation/F3", command)
+        self.assertIn("ablation/F4", command)
         self.assertIn("--head-type linear", command)
         self.assertIn("--head-type mlp_small", command)
-        self.assertIn("--epochs 5", command)
+        self.assertIn("--epochs 6", command)
         self.assertIn("--warmup-epochs 1", command)
         self.assertIn("--freeze-backbone", command)
+        self.assertIn("--anchor-eval-n-per-tier 24", command)
+        self.assertIn('find train/output_models/checkpoints/dinov3_vit7b16/ablation/F1 -maxdepth 1 -type f -name "checkpoint_epoch_*.pt"', command)
+        self.assertIn('ln -sfn "$(basename "$SELECTED_VARIANT_CHECKPOINT")" train/output_models/checkpoints/dinov3_vit7b16/ablation/F4/best_model.pt', command)
 
-    def test_select_ablation_winner_stage_reads_variant_registries(self) -> None:
+    def test_select_ablation_winner_stage_reads_frozen_variant_registries(self) -> None:
         command = vast_ai_training_runner.build_stage_command("select-ablation-winner", "/workspace/mirip_v2")
 
         self.assertIn("select_ablation_winner.py", command)
-        self.assertIn("--candidate A=output_models/logs/dinov3_vit7b16_ablation_A_registry.json", command)
-        self.assertIn("--candidate B=output_models/logs/dinov3_vit7b16_ablation_B_registry.json", command)
-        self.assertIn("--candidate C=output_models/logs/dinov3_vit7b16_ablation_C_registry.json", command)
-        self.assertIn("dinov3_vit7b16_ablation_summary.json", command)
+        self.assertIn("--candidate F1=output_models/logs/dinov3_vit7b16_ablation_F1_registry.json", command)
+        self.assertIn("--candidate F4=output_models/logs/dinov3_vit7b16_ablation_F4_registry.json", command)
+        self.assertIn("dinov3_vit7b16_frozen_ablation_summary.json", command)
+        self.assertIn("--min-improvement 0.005", command)
 
-    def test_full_fresh_stage_uses_ablation_winner_without_resume(self) -> None:
+    def test_unfreeze_ablation_stage_uses_frozen_winner_as_initializer(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("unfreeze-ablation", "/workspace/mirip_v2")
+
+        self.assertIn("frozen_ablation_summary.json", command)
+        self.assertIn("select_ablation_winner.py", command)
+        self.assertIn("--initialize-from \"$FROZEN_WINNER_CHECKPOINT\"", command)
+        self.assertIn("--no-freeze-backbone", command)
+        self.assertIn("ablation/U1", command)
+        self.assertIn("ablation/U2", command)
+        self.assertIn('find train/output_models/checkpoints/dinov3_vit7b16/ablation/U1 -maxdepth 1 -type f -name "checkpoint_epoch_*.pt"', command)
+
+    def test_select_overall_winner_stage_reads_frozen_and_unfreeze_summaries(self) -> None:
+        command = vast_ai_training_runner.build_stage_command("select-overall-winner", "/workspace/mirip_v2")
+
+        self.assertIn("select_overall_winner.py", command)
+        self.assertIn("--summary frozen=output_models/logs/dinov3_vit7b16_frozen_ablation_summary.json", command)
+        self.assertIn("--summary unfreeze=output_models/logs/dinov3_vit7b16_unfreeze_ablation_summary.json", command)
+
+    def test_full_fresh_stage_uses_overall_winner_without_resume(self) -> None:
         command = vast_ai_training_runner.build_stage_command("full-fresh", "/workspace/mirip_v2")
 
         self.assertIn("winner_config", command)
         self.assertIn("probe_dinov3_batch_size.py", command)
         self.assertIn("output_models/archive", command)
-        self.assertIn("--epochs 30", command)
+        self.assertIn("overall_winner.json", command)
+        self.assertIn("--epochs 24", command)
         self.assertIn("--warmup-epochs 2", command)
+        self.assertIn("--restart-from-best-patience 3", command)
         self.assertIn("--feature-pool cls_mean_patch_concat", command)
-        self.assertIn("--freeze-backbone", command)
+        self.assertIn("$FREEZE_FLAG", command)
         self.assertIn("--postprocess-registry output_models/logs/dinov3_vit7b16_postprocess_registry.json", command)
         self.assertNotIn("--resume-from", command)
         self.assertIn("dinov3_vit7b16_full.json", command)

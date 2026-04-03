@@ -9,7 +9,7 @@ from typing import Any
 from .utils import float_or_none, project_relative_path, read_json, resolve_project_path, write_json
 
 SELECTION_CRITERIA: tuple[tuple[str, bool], ...] = (
-    ("anchor_tier_accuracy", True),
+    ("anchor_tier_accuracy_mean", True),
     ("val_accuracy", True),
     ("same_dept_accuracy", True),
     ("val_loss", False),
@@ -56,7 +56,14 @@ def _metric_snapshot(metrics: dict[str, Any], checkpoint_relative: str) -> dict[
     epoch = metrics.get("epoch")
     if epoch is None:
         epoch = infer_epoch_from_checkpoint(checkpoint_relative)
+    anchor_tier_accuracy_mean = float_or_none(metrics.get("anchor_tier_accuracy_mean"))
+    if anchor_tier_accuracy_mean is None:
+        anchor_tier_accuracy_mean = float_or_none(metrics.get("anchor_tier_accuracy"))
     snapshot = {
+        "anchor_tier_accuracy_mean": anchor_tier_accuracy_mean,
+        "anchor_tier_accuracy_std": float_or_none(metrics.get("anchor_tier_accuracy_std")),
+        "anchor_tier_accuracy_per_seed": metrics.get("anchor_tier_accuracy_per_seed"),
+        "anchor_tier_per_tier_mean": metrics.get("anchor_tier_per_tier_mean") or metrics.get("anchor_tier_per_tier"),
         "anchor_tier_accuracy": float_or_none(metrics.get("anchor_tier_accuracy")),
         "val_accuracy": float_or_none(metrics.get("val_accuracy")),
         "same_dept_accuracy": float_or_none(metrics.get("same_dept_accuracy")),
@@ -147,6 +154,8 @@ def load_existing_best(
 def choose_best_record(
     candidate: PostprocessRecord,
     incumbent: PostprocessRecord | None,
+    *,
+    min_improvement: float = 0.0,
 ) -> tuple[PostprocessRecord, dict[str, Any]]:
     if incumbent is None:
         return candidate, {
@@ -169,17 +178,29 @@ def choose_best_record(
                 "higher_is_better": higher_is_better,
             }
         )
-        result = _compare_metric(candidate_value, incumbent_value, higher_is_better)
+        if key == "anchor_tier_accuracy_mean" and candidate_value is not None and incumbent_value is not None:
+            candidate_float = float(candidate_value)
+            incumbent_float = float(incumbent_value)
+            if candidate_float >= incumbent_float + min_improvement:
+                result = 1
+            elif incumbent_float >= candidate_float + min_improvement:
+                result = -1
+            else:
+                result = 0
+        else:
+            result = _compare_metric(candidate_value, incumbent_value, higher_is_better)
         if result > 0:
             return candidate, {
                 "decision": "candidate_selected",
                 "criterion": key,
+                "minimum_improvement": min_improvement if key == "anchor_tier_accuracy_mean" else 0.0,
                 "comparison_trace": comparison_trace,
             }
         if result < 0:
             return incumbent, {
                 "decision": "incumbent_retained",
                 "criterion": key,
+                "minimum_improvement": min_improvement if key == "anchor_tier_accuracy_mean" else 0.0,
                 "comparison_trace": comparison_trace,
             }
 
@@ -195,6 +216,8 @@ def build_registry_payload(
     incumbent: PostprocessRecord | None,
     selected: PostprocessRecord,
     decision: dict[str, Any],
+    *,
+    min_improvement: float,
 ) -> dict[str, Any]:
     compared_at = datetime.now(timezone.utc).isoformat()
     retained_checkpoints = [selected.checkpoint_relative]
@@ -206,6 +229,7 @@ def build_registry_payload(
             {
                 "metric": metric,
                 "higher_is_better": higher_is_better,
+                "minimum_improvement": min_improvement if metric == "anchor_tier_accuracy_mean" else 0.0,
             }
             for metric, higher_is_better in SELECTION_CRITERIA
         ],
@@ -230,10 +254,11 @@ def update_postprocess_registry(
     output_registry: str | Path,
     best_checkpoint: str | Path | None = None,
     best_report: str | Path | None = None,
+    min_improvement: float = 0.0,
 ) -> dict[str, Any]:
     candidate = load_report_record(current_checkpoint, current_report)
     incumbent = load_existing_best(output_registry, best_checkpoint=best_checkpoint, best_report=best_report)
-    selected, decision = choose_best_record(candidate, incumbent)
-    payload = build_registry_payload(candidate, incumbent, selected, decision)
+    selected, decision = choose_best_record(candidate, incumbent, min_improvement=min_improvement)
+    payload = build_registry_payload(candidate, incumbent, selected, decision, min_improvement=min_improvement)
     write_json(output_registry, payload)
     return payload

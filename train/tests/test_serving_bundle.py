@@ -6,21 +6,30 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from train.serving.bundle import ServingBundleManifest, load_manifest, write_manifest
-from train.serving.pipeline import (
-    build_diagnosis_head_payload,
-    build_serving_bundle,
-    choose_default_encoder,
-    resolve_int8_tier_agreement,
-    validate_diagnosis_artifacts,
-)
-from train.training.utils import resolve_model_source
-
 TORCH_AVAILABLE = importlib.util.find_spec("torch") is not None
 if TORCH_AVAILABLE:
     import torch
 
+    from train.serving.bundle import ServingBundleManifest, load_manifest, write_manifest
+    from train.serving.pipeline import (
+        build_diagnosis_head_payload,
+        build_serving_bundle,
+        choose_default_encoder,
+        resolve_int8_tier_agreement,
+        validate_diagnosis_artifacts,
+    )
+    from train.training.utils import resolve_model_source
+else:
+    ServingBundleManifest = load_manifest = write_manifest = None
+    build_diagnosis_head_payload = None
+    build_serving_bundle = None
+    choose_default_encoder = None
+    resolve_int8_tier_agreement = None
+    validate_diagnosis_artifacts = None
+    resolve_model_source = None
 
+
+@unittest.skipUnless(TORCH_AVAILABLE, "torch is required for serving bundle tests")
 class ServingBundleTests(unittest.TestCase):
     def test_manifest_requires_core_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

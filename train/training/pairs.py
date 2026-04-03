@@ -23,6 +23,20 @@ class PairGenerationError(RuntimeError):
 
 PAIR_TYPES: tuple[str, str] = ("same_dept", "cross_dept")
 DISTANCE_BUCKETS: tuple[int, int, int] = (1, 2, 3)
+DEFAULT_TIER_PAIR_MINIMUMS_TRAIN: dict[str, int] = {
+    "A-S": 4_000,
+    "B-C": 4_000,
+    "A-C": 3_000,
+    "C-S": 3_000,
+}
+DEFAULT_TIER_PAIR_MINIMUMS_VAL: dict[str, int] = {
+    "A-S": 400,
+    "B-C": 400,
+    "A-C": 300,
+    "C-S": 300,
+}
+DEFAULT_TIER_PAIR_CAP_AB_TRAIN = 18_000
+DEFAULT_TIER_PAIR_CAP_AB_VAL = 2_250
 
 
 def _row_to_item(row: dict[str, str]) -> dict[str, Any]:
@@ -62,6 +76,10 @@ def _compute_quality_tier(high: dict[str, Any], low: dict[str, Any]) -> int:
     if any_repro:
         return 2
     return 1
+
+
+def _unordered_tier_pair(first_tier: str, second_tier: str) -> str:
+    return "-".join(sorted((first_tier, second_tier)))
 
 
 def _tier_distance(first: dict[str, Any], second: dict[str, Any]) -> int:
@@ -104,6 +122,7 @@ def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: f
                         "tier_score_2": low["tier_score"],
                         "score_gap": round(gap, 4),
                         "tier_distance": _tier_distance(high, low),
+                        "unordered_tier_pair": _unordered_tier_pair(high["tier"], low["tier"]),
                         "pair_type": "same_dept",
                         "dept": dept,
                         "quality_tier": quality,
@@ -122,6 +141,7 @@ def _generate_same_dept_candidates(items: list[dict[str, Any]], min_score_gap: f
                         "tier_score_2": high["tier_score"],
                         "score_gap": round(gap, 4),
                         "tier_distance": _tier_distance(high, low),
+                        "unordered_tier_pair": _unordered_tier_pair(high["tier"], low["tier"]),
                         "pair_type": "same_dept",
                         "dept": dept,
                         "quality_tier": quality,
@@ -168,6 +188,7 @@ def _generate_cross_dept_candidates(
                 "tier_score_2": low["tier_score"],
                 "score_gap": round(gap, 4),
                 "tier_distance": _tier_distance(high, low),
+                "unordered_tier_pair": _unordered_tier_pair(high["tier"], low["tier"]),
                 "pair_type": "cross_dept",
                 "dept": f"{high['normalized_dept']}_vs_{low['normalized_dept']}",
                 "quality_tier": 0,
@@ -185,24 +206,33 @@ def _select_with_appearance_limit(
     max_appearances: int,
     counts: Counter[str] | None = None,
     selected_keys: set[tuple[int, int, int]] | None = None,
+    tier_pair_counts: Counter[str] | None = None,
+    tier_pair_caps: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     selected: list[dict[str, Any]] = []
     image_counts: Counter[str] = counts if counts is not None else Counter()
     seen_keys = selected_keys if selected_keys is not None else set()
+    pair_counts = tier_pair_counts if tier_pair_counts is not None else Counter()
     for pair in candidates:
         if len(selected) >= target:
             break
         first = pair["image_path_1"]
         second = pair["image_path_2"]
         pair_key = (pair["post_no_1"], pair["post_no_2"], pair["label"])
+        unordered_tier_pair = str(pair.get("unordered_tier_pair", ""))
         if pair_key in seen_keys:
             continue
         if image_counts[first] >= max_appearances or image_counts[second] >= max_appearances:
             continue
+        if tier_pair_caps and unordered_tier_pair in tier_pair_caps:
+            if pair_counts[unordered_tier_pair] >= tier_pair_caps[unordered_tier_pair]:
+                continue
         selected.append(pair)
         seen_keys.add(pair_key)
         image_counts[first] += 1
         image_counts[second] += 1
+        if unordered_tier_pair:
+            pair_counts[unordered_tier_pair] += 1
     return selected
 
 
@@ -332,6 +362,79 @@ def _bucket_candidates_by_cell(
     return buckets
 
 
+def _bucket_candidates_by_tier_pair(
+    candidates: list[dict[str, Any]],
+) -> dict[str, list[dict[str, Any]]]:
+    buckets: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for pair in candidates:
+        buckets[str(pair["unordered_tier_pair"])].append(pair)
+    return buckets
+
+
+def _select_tier_pair_minimums(
+    candidates: list[dict[str, Any]],
+    *,
+    tier_pair_minimums: dict[str, int],
+    max_appearances: int,
+    tier_pair_caps: dict[str, int],
+) -> tuple[list[dict[str, Any]], Counter[str], Counter[str], set[tuple[int, int, int]], dict[str, Any]]:
+    selected: list[dict[str, Any]] = []
+    image_counts: Counter[str] = Counter()
+    tier_pair_counts: Counter[str] = Counter()
+    selected_keys: set[tuple[int, int, int]] = set()
+    candidates_by_tier_pair = _bucket_candidates_by_tier_pair(candidates)
+
+    tier_pair_order = sorted(
+        tier_pair_minimums,
+        key=lambda pair_key: (
+            len(candidates_by_tier_pair.get(pair_key, [])) / max(tier_pair_minimums[pair_key], 1)
+            if tier_pair_minimums[pair_key] > 0
+            else float("inf"),
+            pair_key,
+        ),
+    )
+
+    selected_counts: dict[str, int] = {}
+    shortfalls: dict[str, dict[str, Any]] = {}
+    for pair_key in tier_pair_order:
+        target = tier_pair_minimums[pair_key]
+        chosen = _select_with_appearance_limit(
+            candidates=candidates_by_tier_pair.get(pair_key, []),
+            target=target,
+            max_appearances=max_appearances,
+            counts=image_counts,
+            selected_keys=selected_keys,
+            tier_pair_counts=tier_pair_counts,
+            tier_pair_caps=tier_pair_caps,
+        )
+        selected.extend(chosen)
+        selected_counts[pair_key] = len(chosen)
+        available = len(candidates_by_tier_pair.get(pair_key, []))
+        if len(chosen) < target:
+            reasons = []
+            if available < target:
+                reasons.append("insufficient_candidates")
+            if len(chosen) < min(target, available):
+                reasons.append("selection_limited_by_max_appearances_or_caps")
+            shortfalls[pair_key] = {
+                "target": target,
+                "selected": len(chosen),
+                "available": available,
+                "reasons": reasons,
+            }
+
+    diagnostics = {
+        "tier_pair_minimum_targets": dict(tier_pair_minimums),
+        "tier_pair_minimum_selected": selected_counts,
+        "tier_pair_available": {
+            pair_key: len(candidates_by_tier_pair.get(pair_key, []))
+            for pair_key in tier_pair_minimums
+        },
+        "pair_quota_shortfalls": shortfalls,
+    }
+    return selected, image_counts, tier_pair_counts, selected_keys, diagnostics
+
+
 def _select_quota_constrained_pairs(
     candidates: list[dict[str, Any]],
     *,
@@ -339,6 +442,11 @@ def _select_quota_constrained_pairs(
     same_dept_ratio: float,
     max_appearances: int,
     distance_ratio_targets: dict[int, float],
+    initial_selected: list[dict[str, Any]] | None = None,
+    counts: Counter[str] | None = None,
+    selected_keys: set[tuple[int, int, int]] | None = None,
+    tier_pair_counts: Counter[str] | None = None,
+    tier_pair_caps: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     pair_type_targets, distance_targets, cell_targets = _allocate_pair_type_distance_targets(
         total_pairs=total_pairs,
@@ -346,10 +454,13 @@ def _select_quota_constrained_pairs(
         distance_ratio_targets=distance_ratio_targets,
     )
     candidates_by_cell = _bucket_candidates_by_cell(candidates)
-    selected: list[dict[str, Any]] = []
-    counts: Counter[str] = Counter()
-    selected_keys: set[tuple[int, int, int]] = set()
+    selected: list[dict[str, Any]] = list(initial_selected or [])
+    counts = counts if counts is not None else Counter()
+    selected_keys = selected_keys if selected_keys is not None else set()
+    tier_pair_counts = tier_pair_counts if tier_pair_counts is not None else Counter()
     selected_by_cell: dict[tuple[str, int], int] = defaultdict(int)
+    for pair in selected:
+        selected_by_cell[(pair["pair_type"], int(pair["tier_distance"]))] += 1
 
     prioritized_cells = sorted(
         [
@@ -366,10 +477,12 @@ def _select_quota_constrained_pairs(
     for cell in prioritized_cells:
         chosen = _select_with_appearance_limit(
             candidates=candidates_by_cell[cell],
-            target=cell_targets[cell],
+            target=max(cell_targets[cell] - selected_by_cell[cell], 0),
             max_appearances=max_appearances,
             counts=counts,
             selected_keys=selected_keys,
+            tier_pair_counts=tier_pair_counts,
+            tier_pair_caps=tier_pair_caps,
         )
         selected.extend(chosen)
         selected_by_cell[cell] += len(chosen)
@@ -398,11 +511,14 @@ def _select_quota_constrained_pairs(
                 max_appearances=max_appearances,
                 counts=counts,
                 selected_keys=selected_keys,
+                tier_pair_counts=tier_pair_counts,
+                tier_pair_caps=tier_pair_caps,
             )
         )
 
     final_pair_type_counts = Counter(pair["pair_type"] for pair in selected)
     final_distance_counts = Counter(int(pair["tier_distance"]) for pair in selected)
+    final_tier_pair_counts = Counter(str(pair["unordered_tier_pair"]) for pair in selected)
     return selected[:total_pairs], {
         "pair_type_targets": dict(pair_type_targets),
         "distance_targets": {str(distance): distance_targets[distance] for distance in DISTANCE_BUCKETS},
@@ -432,6 +548,7 @@ def _select_quota_constrained_pairs(
             pair_type: final_pair_type_counts[pair_type] / max(pair_type_targets[pair_type], 1)
             for pair_type in PAIR_TYPES
         },
+        "unordered_tier_pair_counts": dict(final_tier_pair_counts),
         "distance_ratio_targets": {
             str(distance): distance_ratio_targets[distance]
             for distance in DISTANCE_BUCKETS
@@ -465,6 +582,8 @@ def generate_pairs(
     distance1_ratio: float = 0.6,
     distance2_ratio: float = 0.3,
     distance3_ratio: float = 0.1,
+    tier_pair_minimums: dict[str, int] | None = None,
+    tier_pair_caps: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     rng = random.Random(seed)
     same_target = int(total_pairs * same_dept_ratio)
@@ -474,6 +593,16 @@ def generate_pairs(
         distance2_ratio=distance2_ratio,
         distance3_ratio=distance3_ratio,
     )
+    tier_pair_minimums = {
+        pair_key: target
+        for pair_key, target in (tier_pair_minimums or {}).items()
+        if target > 0
+    }
+    tier_pair_caps = {
+        pair_key: target
+        for pair_key, target in (tier_pair_caps or {}).items()
+        if target > 0
+    }
 
     same_candidates = _generate_same_dept_candidates(items, min_score_gap=min_score_gap)
     same_candidates = _sort_same_dept_candidates(same_candidates)
@@ -494,12 +623,24 @@ def generate_pairs(
         for pair in cross_candidates
         if int(pair["tier_distance"]) in DISTANCE_BUCKETS
     ]
+    all_candidates = same_candidates + cross_candidates
+    minimum_selected, counts, tier_pair_counts, selected_keys, tier_pair_diagnostics = _select_tier_pair_minimums(
+        all_candidates,
+        tier_pair_minimums=tier_pair_minimums,
+        max_appearances=max_appearances,
+        tier_pair_caps=tier_pair_caps,
+    )
     pairs, quota_diagnostics = _select_quota_constrained_pairs(
-        candidates=same_candidates + cross_candidates,
+        candidates=all_candidates,
         total_pairs=total_pairs,
         same_dept_ratio=same_dept_ratio,
         max_appearances=max_appearances,
         distance_ratio_targets=distance_ratio_targets,
+        initial_selected=minimum_selected,
+        counts=counts,
+        selected_keys=selected_keys,
+        tier_pair_counts=tier_pair_counts,
+        tier_pair_caps=tier_pair_caps,
     )
     rng.shuffle(pairs)
     selected_same = sum(1 for pair in pairs if pair["pair_type"] == "same_dept")
@@ -526,6 +667,12 @@ def generate_pairs(
             available_candidates=len(cross_candidates),
         ),
         **quota_diagnostics,
+        **tier_pair_diagnostics,
+        "tier_pair_caps": dict(tier_pair_caps),
+        "tier_pair_cap_hits": {
+            pair_key: quota_diagnostics["unordered_tier_pair_counts"].get(pair_key, 0) >= cap
+            for pair_key, cap in tier_pair_caps.items()
+        },
     }
     return pairs, diagnostics
 
@@ -545,6 +692,10 @@ def build_pair_outputs(
     distance1_ratio: float = 0.6,
     distance2_ratio: float = 0.3,
     distance3_ratio: float = 0.1,
+    train_tier_pair_minimums: dict[str, int] | None = None,
+    val_tier_pair_minimums: dict[str, int] | None = None,
+    train_tier_pair_caps: dict[str, int] | None = None,
+    val_tier_pair_caps: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     rows = [_row_to_item(row) for row in load_rows_from_csv(manifest_csv)]
     train_items, val_items, test_items = split_items_by_image(
@@ -566,6 +717,8 @@ def build_pair_outputs(
         distance1_ratio=distance1_ratio,
         distance2_ratio=distance2_ratio,
         distance3_ratio=distance3_ratio,
+        tier_pair_minimums=train_tier_pair_minimums,
+        tier_pair_caps=train_tier_pair_caps,
     )
     val_pairs, val_pair_diagnostics = generate_pairs(
         items=val_items,
@@ -577,6 +730,8 @@ def build_pair_outputs(
         distance1_ratio=distance1_ratio,
         distance2_ratio=distance2_ratio,
         distance3_ratio=distance3_ratio,
+        tier_pair_minimums=val_tier_pair_minimums,
+        tier_pair_caps=val_tier_pair_caps,
     )
 
     metadata_fields = [
@@ -600,6 +755,7 @@ def build_pair_outputs(
         "tier_1",
         "tier_2",
         "tier_distance",
+        "unordered_tier_pair",
         "pair_type",
         "dept",
         "quality_tier",
@@ -642,10 +798,14 @@ def build_pair_outputs(
         "tier_distribution_test": dict(Counter(item["tier"] for item in test_items)),
         "pair_type_train": dict(Counter(pair["pair_type"] for pair in train_pairs)),
         "pair_type_val": dict(Counter(pair["pair_type"] for pair in val_pairs)),
+        "tier_direction_train": dict(Counter(f"{pair['tier_1']}>{pair['tier_2']}" for pair in train_pairs)),
+        "tier_direction_val": dict(Counter(f"{pair['tier_1']}>{pair['tier_2']}" for pair in val_pairs)),
         "tier_distance_train": dict(Counter(str(pair["tier_distance"]) for pair in train_pairs)),
         "tier_distance_val": dict(Counter(str(pair["tier_distance"]) for pair in val_pairs)),
         "quality_tiers_train": dict(Counter(pair["quality_tier"] for pair in train_pairs)),
         "quality_tiers_val": dict(Counter(pair["quality_tier"] for pair in val_pairs)),
+        "unordered_tier_pair_train": dict(Counter(pair["unordered_tier_pair"] for pair in train_pairs)),
+        "unordered_tier_pair_val": dict(Counter(pair["unordered_tier_pair"] for pair in val_pairs)),
         "seed": seed,
         "min_score_gap": min_score_gap,
         "max_appearances": max_appearances,
@@ -653,6 +813,12 @@ def build_pair_outputs(
             "1": distance1_ratio,
             "2": distance2_ratio,
             "3": distance3_ratio,
+        },
+        "tier_pair_quota_targets": {
+            "train_minimums": train_tier_pair_minimums or {},
+            "val_minimums": val_tier_pair_minimums or {},
+            "train_caps": train_tier_pair_caps or {},
+            "val_caps": val_tier_pair_caps or {},
         },
     }
     stats["pair_shortfall"] = {

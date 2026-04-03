@@ -14,13 +14,13 @@ This script intentionally focuses on infrastructure preparation:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import shlex
 import subprocess
 import sys
 import time
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,6 +33,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 class VastApiError(RuntimeError):
     """Raised when the Vast.ai API returns an error response."""
+
+
+def _import_toml_module() -> Any:
+    for module_name in ("tomllib", "tomli", "pip._vendor.tomli"):
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+    raise ModuleNotFoundError(
+        "No TOML parser is available. Install tomli for Python < 3.11 or use a Python build with tomllib."
+    )
+
+
+tomllib = _import_toml_module()
 
 
 def load_toml(path: str | Path) -> dict[str, Any]:
