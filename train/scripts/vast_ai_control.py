@@ -50,8 +50,7 @@ tomllib = _import_toml_module()
 
 
 def load_toml(path: str | Path) -> dict[str, Any]:
-    with Path(path).open("rb") as handle:
-        return tomllib.load(handle)
+    return tomllib.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def require_env(name: str) -> str:
