@@ -769,6 +769,25 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
         train_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
         train_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
         probe_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe_{name}.json"
+        stage_label = f"unfreeze_{name}"
+        train_command = f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$UNFREEZE_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}"
+        skip_on_failure_command = f"""if ! run_training_with_oom_retry "{stage_label}" "{checkpoint_dir}" "{checkpoint_dir_file}" {shlex.quote("--initialize-from $FROZEN_WINNER_CHECKPOINT")} "$TRAIN_COMMAND_{stage_label}"; then
+python3 - "{name}" "{TRAIN_UNFREEZE_ABLATION_REPORT_FILE}" "$UNFREEZE_INPUT_SIZE" "{unfreeze_last_n_layers}" <<'PY'
+import json, sys
+from pathlib import Path
+variant_name, output_path, input_size, unfreeze_last_n_layers = sys.argv[1:5]
+out = Path(output_path)
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({{
+    "skipped": True,
+    "reason": "oom_minimum_unfreeze_config",
+    "failed_variant": variant_name,
+    "attempted_input_size": int(input_size),
+    "attempted_unfreeze_last_n_layers": int(unfreeze_last_n_layers),
+}}, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+exit 0
+fi"""
         parts.extend(
             [
                 f"rm -rf {checkpoint_dir_file}",
@@ -779,13 +798,8 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                     input_size="$UNFREEZE_INPUT_SIZE",
                     report_file=probe_report_file,
                 ),
-                *_build_oom_retry_train_parts(
-                    stage_label=f"unfreeze_{name}",
-                    checkpoint_dir=checkpoint_dir,
-                    checkpoint_dir_file=checkpoint_dir_file,
-                    initial_progress_args="--initialize-from $FROZEN_WINNER_CHECKPOINT",
-                    train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$UNFREEZE_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
-                ),
+                f'TRAIN_COMMAND_{stage_label}=$(cat <<\'EOF_{stage_label}\'\n{train_command}\nEOF_{stage_label}\n)',
+                skip_on_failure_command,
                 *_build_variant_keep_best_only_parts(
                     python_bin,
                     checkpoint_dir_file=checkpoint_dir_file,

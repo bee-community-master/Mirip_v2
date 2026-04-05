@@ -453,6 +453,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn('if [ "$FROZEN_WINNER_NAME" != "F1" ]; then rm -rf train/output_models/checkpoints/dinov3_vit7b16/ablation/F1; fi', command)
         self.assertIn('if [ "$FROZEN_WINNER_NAME" != "F4" ]; then rm -rf train/output_models/checkpoints/dinov3_vit7b16/ablation/F4; fi', command)
         self.assertIn("--initialize-from $FROZEN_WINNER_CHECKPOINT", command)
+        self.assertIn('"reason": "oom_minimum_unfreeze_config"', command)
         self.assertIn("--resume-from %s --resume-next-epoch", command)
         self.assertIn("--no-freeze-backbone", command)
         self.assertIn('--input-size "$UNFREEZE_INPUT_SIZE"', command)
