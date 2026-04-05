@@ -381,6 +381,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         command = vast_ai_training_runner.build_stage_command("frozen-ablation", "/workspace/mirip_v2")
 
         self.assertIn("probe_dinov3_batch_size.py", command)
+        self.assertIn("run_training_with_oom_retry", command)
+        self.assertIn('run_training_with_oom_retry "frozen_F1"', command)
         self.assertIn("--batch-size-candidates 8,6,4,2", command)
         self.assertIn("ablation/F1", command)
         self.assertIn("ablation/F2", command)
@@ -409,7 +411,10 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
         self.assertIn("frozen_ablation_summary.json", command)
         self.assertIn("select_ablation_winner.py", command)
+        self.assertIn("run_training_with_oom_retry", command)
+        self.assertIn('run_training_with_oom_retry "unfreeze_U1"', command)
         self.assertIn("--initialize-from \"$FROZEN_WINNER_CHECKPOINT\"", command)
+        self.assertIn("--resume-from %s --resume-next-epoch", command)
         self.assertIn("--no-freeze-backbone", command)
         self.assertIn("ablation/U1", command)
         self.assertIn("ablation/U2", command)
@@ -427,6 +432,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
 
         self.assertIn("winner_config", command)
         self.assertIn("probe_dinov3_batch_size.py", command)
+        self.assertIn("run_training_with_oom_retry", command)
+        self.assertIn('run_training_with_oom_retry "full_fresh"', command)
         self.assertIn("output_models/archive", command)
         self.assertIn("overall_winner.json", command)
         self.assertIn("--epochs 24", command)
@@ -434,8 +441,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("--restart-from-best-patience 3", command)
         self.assertIn("--feature-pool cls_mean_patch_concat", command)
         self.assertIn("$FREEZE_FLAG", command)
+        self.assertIn("$PROGRESS_ARGS", command)
         self.assertIn("--postprocess-registry output_models/logs/dinov3_vit7b16_postprocess_registry.json", command)
-        self.assertNotIn("--resume-from", command)
         self.assertIn("dinov3_vit7b16_full.json", command)
 
 

@@ -39,6 +39,7 @@ TRAIN_DEFAULT_INPUT_SIZE = 256
 TRAIN_FEATURE_POOL = "cls_mean_patch_concat"
 TRAIN_EFFECTIVE_BATCH_SIZE = 64
 TRAIN_BATCH_SIZE_CANDIDATES = "8,6,4,2"
+TRAIN_OOM_FALLBACK_BATCH_SIZE_CANDIDATES = (8, 6, 4, 2, 1)
 TRAIN_NUM_WORKERS = 8
 TRAIN_PREFETCH_FACTOR = 4
 TRAIN_BUILD_PAIRS_TRAIN_RATIO = 0.8
@@ -458,6 +459,87 @@ def _batch_probe_parts(remote_root: str, *, head_type: str, input_size: str | in
     ]
 
 
+def _oom_retry_shell_parts() -> list[str]:
+    candidates = " ".join(str(candidate) for candidate in TRAIN_OOM_FALLBACK_BATCH_SIZE_CANDIDATES)
+    oom_pattern = "CUDA out of memory|OutOfMemoryError|torch\\.OutOfMemoryError"
+    return [
+        "next_micro_batch() {",
+        '  local current="$1"',
+        f'  for candidate in {candidates}; do',
+        '    if [ "$candidate" -lt "$current" ]; then',
+        '      printf "%s" "$candidate"',
+        "      return 0",
+        "    fi",
+        "  done",
+        "  return 0",
+        "}",
+        "resolve_stage_progress_args() {",
+        '  local checkpoint_dir_rel="$1"',
+        '  local checkpoint_dir_file="$2"',
+        '  local initial_progress_args="$3"',
+        '  local latest_checkpoint=""',
+        '  if [ -d "$checkpoint_dir_file" ]; then',
+        '    latest_checkpoint=$(find "$checkpoint_dir_file" -maxdepth 1 -type f -name "checkpoint_epoch_*.pt" | sort | tail -n 1)',
+        "  fi",
+        '  if [ -n "$latest_checkpoint" ]; then',
+        '    printf -- "--resume-from %s --resume-next-epoch" "${checkpoint_dir_rel}/$(basename "$latest_checkpoint")"',
+        "    return 0",
+        "  fi",
+        '  printf "%s" "$initial_progress_args"',
+        "}",
+        "run_training_with_oom_retry() {",
+        '  local stage_label="$1"',
+        '  local checkpoint_dir_rel="$2"',
+        '  local checkpoint_dir_file="$3"',
+        '  local initial_progress_args="$4"',
+        '  local command_template="$5"',
+        "  local attempt=1",
+        '  local current_micro_batch="${MICRO_BATCH}"',
+        "  while true; do",
+        '    MICRO_BATCH="$current_micro_batch"',
+        f'    GRAD_ACCUM=$((({TRAIN_EFFECTIVE_BATCH_SIZE} + MICRO_BATCH - 1) / MICRO_BATCH))',
+        '    PROGRESS_ARGS="$(resolve_stage_progress_args "$checkpoint_dir_rel" "$checkpoint_dir_file" "$initial_progress_args")"',
+        f'    ATTEMPT_LOG="{TRAIN_REPORTS_DIR}/${{stage_label}}_attempt_${{attempt}}_mb${{MICRO_BATCH}}.log"',
+        '    echo "[oom-retry] stage=$stage_label attempt=$attempt micro_batch=$MICRO_BATCH grad_accum=$GRAD_ACCUM progress_args=${PROGRESS_ARGS:-<none>}"',
+        "    set +e",
+        '    eval "$command_template" > >(tee "$ATTEMPT_LOG") 2> >(tee -a "$ATTEMPT_LOG" >&2)',
+        "    local status=$?",
+        "    set -e",
+        '    if [ "$status" -eq 0 ]; then',
+        "      return 0",
+        "    fi",
+        f'    if ! grep -Eiq "{oom_pattern}" "$ATTEMPT_LOG"; then',
+        '      echo "[oom-retry] stage=$stage_label failed with non-OOM status=$status"',
+        '      return "$status"',
+        "    fi",
+        '    local next_batch=""',
+        '    next_batch="$(next_micro_batch "$MICRO_BATCH")"',
+        '    if [ -z "$next_batch" ]; then',
+        '      echo "[oom-retry] stage=$stage_label exhausted fallback candidates after OOM at micro_batch=$MICRO_BATCH"',
+        '      return "$status"',
+        "    fi",
+        '    echo "[oom-retry] stage=$stage_label OOM at micro_batch=$MICRO_BATCH; retrying with micro_batch=$next_batch"',
+        '    current_micro_batch="$next_batch"',
+        "    attempt=$((attempt + 1))",
+        "  done",
+        "}",
+    ]
+
+
+def _build_oom_retry_train_parts(
+    *,
+    stage_label: str,
+    checkpoint_dir: str,
+    checkpoint_dir_file: str,
+    initial_progress_args: str,
+    train_command: str,
+) -> list[str]:
+    return [
+        f'TRAIN_COMMAND_{stage_label}=$(cat <<\'EOF_{stage_label}\'\n{train_command}\nEOF_{stage_label}\n)',
+        f'run_training_with_oom_retry "{stage_label}" "{checkpoint_dir}" "{checkpoint_dir_file}" {shlex.quote(initial_progress_args)} "$TRAIN_COMMAND_{stage_label}"',
+    ]
+
+
 def _build_pairs_legacy_aligned_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     return _bash_command(
@@ -520,6 +602,7 @@ def _build_frozen_ablation_command(remote_root: str) -> str:
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
         f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
+        *_oom_retry_shell_parts(),
     ]
     for variant in FROZEN_ABLATION_VARIANTS:
         name = str(variant["name"])
@@ -548,7 +631,13 @@ def _build_frozen_ablation_command(remote_root: str) -> str:
                     input_size=input_size,
                     report_file=probe_report_file,
                 ),
-                f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 6 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                *_build_oom_retry_train_parts(
+                    stage_label=f"frozen_{name}",
+                    checkpoint_dir=checkpoint_dir,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    initial_progress_args="",
+                    train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 6 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                ),
                 *_build_variant_keep_best_only_parts(
                     python_bin,
                     checkpoint_dir_file=checkpoint_dir_file,
@@ -585,6 +674,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
     parts = [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
+        *_oom_retry_shell_parts(),
         f'FROZEN_WINNER_METRIC="{winner_metric}"',
         "python3 - \"$FROZEN_WINNER_METRIC\" <<'PY'\nimport json, sys\nfrom pathlib import Path\nvalue = float(sys.argv[1])\nout = Path('" + TRAIN_UNFREEZE_ABLATION_REPORT_FILE + "')\nout.parent.mkdir(parents=True, exist_ok=True)\nif value >= 0.56:\n    out.write_text(json.dumps({'skipped': True, 'reason': 'frozen_winner_meets_threshold', 'threshold': 0.56}, indent=2, ensure_ascii=False), encoding='utf-8')\nPY",
         'if python3 - "$FROZEN_WINNER_METRIC" <<\'PY\'\nimport sys\nsys.exit(0 if float(sys.argv[1]) >= 0.56 else 1)\nPY\nthen exit 0; fi',
@@ -651,7 +741,13 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                     input_size="$FROZEN_WINNER_INPUT_SIZE",
                     report_file=probe_report_file,
                 ),
-                f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --initialize-from \"$FROZEN_WINNER_CHECKPOINT\" --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                *_build_oom_retry_train_parts(
+                    stage_label=f"unfreeze_{name}",
+                    checkpoint_dir=checkpoint_dir,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    initial_progress_args='--initialize-from "$FROZEN_WINNER_CHECKPOINT"',
+                    train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                ),
                 *_build_variant_keep_best_only_parts(
                     python_bin,
                     checkpoint_dir_file=checkpoint_dir_file,
@@ -765,6 +861,7 @@ def _build_full_fresh_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
+            *_oom_retry_shell_parts(),
             f'WINNER_HEAD_TYPE="{winner_head_type}"',
             f'WINNER_INPUT_SIZE="{winner_input_size}"',
             f'WINNER_LR="{winner_learning_rate}"',
@@ -780,7 +877,13 @@ def _build_full_fresh_command(remote_root: str) -> str:
                 report_file=TRAIN_BATCH_PROBE_REPORT_FILE,
             ),
             * _build_archive_reset_parts(),
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 24 --warmup-epochs 2 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$WINNER_LR\" --weight-decay \"$WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale \"$WINNER_BACKBONE_LR_SCALE\" --dropout 0.1 --margin 0.3 --input-size \"$WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$WINNER_HEAD_TYPE\" $FREEZE_FLAG --unfreeze-last-n-layers \"$WINNER_UNFREEZE_LAST_N_LAYERS\" --patience 6 --restart-from-best-patience 3 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
+            *_build_oom_retry_train_parts(
+                stage_label="full_fresh",
+                checkpoint_dir=f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
+                checkpoint_dir_file=f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/full",
+                initial_progress_args="",
+                train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 24 --warmup-epochs 2 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$WINNER_LR\" --weight-decay \"$WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale \"$WINNER_BACKBONE_LR_SCALE\" --dropout 0.1 --margin 0.3 --input-size \"$WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$WINNER_HEAD_TYPE\" $FREEZE_FLAG --unfreeze-last-n-layers \"$WINNER_UNFREEZE_LAST_N_LAYERS\" --patience 6 --restart-from-best-patience 3 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
+            ),
             f'SELECTED_CHECKPOINT="{selected_checkpoint_value}"',
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --metadata training/data/metadata_train.csv --image-root data --output {TRAIN_FULL_FINAL_ANCHORS} --report {TRAIN_FULL_FINAL_ANCHOR_REPORT}",
             f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --pairs-val training/data/pairs_val.csv --image-root data --anchors {TRAIN_FULL_FINAL_ANCHORS} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output {TRAIN_FULL_FINAL_REPORT}",
