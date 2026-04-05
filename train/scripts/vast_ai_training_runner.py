@@ -497,6 +497,7 @@ def _oom_retry_shell_parts() -> list[str]:
         '  local checkpoint_dir_file="$3"',
         '  local initial_progress_args="$4"',
         '  local command_template="$5"',
+        '  OOM_RETRY_LAST_FAILURE_MODE=""',
         "  local attempt=1",
         '  local current_micro_batch="${MICRO_BATCH}"',
         "  while true; do",
@@ -510,15 +511,18 @@ def _oom_retry_shell_parts() -> list[str]:
         "    local status=$?",
         "    set -e",
         '    if [ "$status" -eq 0 ]; then',
+        '      OOM_RETRY_LAST_FAILURE_MODE=""',
         "      return 0",
         "    fi",
         f'    if ! grep -Eiq "{oom_pattern}" "$ATTEMPT_LOG"; then',
+        '      OOM_RETRY_LAST_FAILURE_MODE="non_oom"',
         '      echo "[oom-retry] stage=$stage_label failed with non-OOM status=$status"',
         '      return "$status"',
         "    fi",
         '    local next_batch=""',
         '    next_batch="$(next_micro_batch "$MICRO_BATCH")"',
         '    if [ -z "$next_batch" ]; then',
+        '      OOM_RETRY_LAST_FAILURE_MODE="oom_exhausted"',
         '      echo "[oom-retry] stage=$stage_label exhausted fallback candidates after OOM at micro_batch=$MICRO_BATCH"',
         '      return "$status"',
         "    fi",
@@ -772,6 +776,9 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
         stage_label = f"unfreeze_{name}"
         train_command = f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$UNFREEZE_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}"
         skip_on_failure_command = f"""if ! run_training_with_oom_retry "{stage_label}" "{checkpoint_dir}" "{checkpoint_dir_file}" {shlex.quote("--initialize-from $FROZEN_WINNER_CHECKPOINT")} "$TRAIN_COMMAND_{stage_label}"; then
+if [ "${{OOM_RETRY_LAST_FAILURE_MODE:-}}" != "oom_exhausted" ]; then
+  exit 1
+fi
 python3 - "{name}" "{TRAIN_UNFREEZE_ABLATION_REPORT_FILE}" "$UNFREEZE_INPUT_SIZE" "{unfreeze_last_n_layers}" <<'PY'
 import json, sys
 from pathlib import Path

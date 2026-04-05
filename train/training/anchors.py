@@ -50,6 +50,7 @@ def build_anchor_store(
     n_per_tier: int = 10,
     seed: int = 42,
     group_balanced: bool = False,
+    precision: str = "auto",
     source_checkpoint: str | Path | None = None,
 ) -> AnchorStore:
     rows = load_metadata_rows(metadata_csv)
@@ -59,6 +60,7 @@ def build_anchor_store(
 
     rng = random.Random(seed)
     device = next(model.parameters()).device
+    resolved_precision = resolve_precision(precision, "cuda" if device.type == "cuda" else "cpu")
     features: dict[str, torch.Tensor] = {}
     image_paths: dict[str, list[str]] = {}
 
@@ -84,7 +86,8 @@ def build_anchor_store(
                     input_size=input_size,
                     is_train=False,
                 ).unsqueeze(0).to(device)
-                projected = model.project_features(model.extract_features(pixel_values))
+                with _evaluation_autocast(device, resolved_precision):
+                    projected = model.project_features(model.extract_features(pixel_values))
                 tier_features.append(projected.squeeze(0).cpu())
                 tier_paths.append(row["image_path"])
             if tier_features:
@@ -267,6 +270,7 @@ def _evaluate_anchor_tier_accuracy_once(
         n_per_tier=n_per_tier,
         seed=seed,
         group_balanced=group_balanced,
+        precision=precision,
         source_checkpoint=source_checkpoint,
     )
     metrics = evaluate_anchor_tier_accuracy(
