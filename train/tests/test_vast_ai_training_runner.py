@@ -38,6 +38,30 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn(prepare_fragment, command)
         self.assertLess(command.index(enrichment_fragment), command.index(prepare_fragment))
 
+    def test_unfreeze_ablation_command_passes_winner_values_as_python_args(self) -> None:
+        with (
+            mock.patch.object(vast_ai_training_runner, "_batch_probe_parts", return_value=["echo batch-probe"]),
+            mock.patch.object(vast_ai_training_runner, "_build_variant_keep_best_only_parts", return_value=["echo keep-best"]),
+            mock.patch.object(
+                vast_ai_training_runner,
+                "_json_value_command",
+                side_effect=[
+                    "0.4920634920634921",
+                    "output_models/checkpoints/dinov3_vit7b16/ablation/F2/checkpoint_epoch_0006.pt",
+                    "linear",
+                    "256",
+                    "0.0003",
+                    "0.0001",
+                ],
+            ),
+        ):
+            command = vast_ai_training_runner.build_stage_command("unfreeze-ablation", "/workspace/mirip_v2")
+
+        self.assertIn('python3 - "$FROZEN_WINNER_METRIC"', command)
+        self.assertIn('python3 - "$FROZEN_WINNER_LR"', command)
+        self.assertNotIn("os.environ['FROZEN_WINNER_METRIC']", command)
+        self.assertNotIn('os.environ["FROZEN_WINNER_LR"]', command)
+
     def test_load_env_file_sets_instance_id_without_overwriting_existing_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"

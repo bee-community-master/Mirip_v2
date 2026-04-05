@@ -586,8 +586,8 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
         f'FROZEN_WINNER_METRIC="{winner_metric}"',
-        "python3 - <<'PY'\nimport json, os\nfrom pathlib import Path\nvalue=float(os.environ['FROZEN_WINNER_METRIC'])\nout=Path('" + TRAIN_UNFREEZE_ABLATION_REPORT_FILE + "')\nout.parent.mkdir(parents=True, exist_ok=True)\nif value >= 0.56:\n    out.write_text(json.dumps({'skipped': True, 'reason': 'frozen_winner_meets_threshold', 'threshold': 0.56}, indent=2, ensure_ascii=False), encoding='utf-8')\nPY",
-        'if python3 - <<\'PY\'\nimport os,sys\nsys.exit(0 if float(os.environ["FROZEN_WINNER_METRIC"]) >= 0.56 else 1)\nPY\nthen exit 0; fi',
+        "python3 - \"$FROZEN_WINNER_METRIC\" <<'PY'\nimport json, sys\nfrom pathlib import Path\nvalue = float(sys.argv[1])\nout = Path('" + TRAIN_UNFREEZE_ABLATION_REPORT_FILE + "')\nout.parent.mkdir(parents=True, exist_ok=True)\nif value >= 0.56:\n    out.write_text(json.dumps({'skipped': True, 'reason': 'frozen_winner_meets_threshold', 'threshold': 0.56}, indent=2, ensure_ascii=False), encoding='utf-8')\nPY",
+        'if python3 - "$FROZEN_WINNER_METRIC" <<\'PY\'\nimport sys\nsys.exit(0 if float(sys.argv[1]) >= 0.56 else 1)\nPY\nthen exit 0; fi',
         _json_env_assignment(
             "FROZEN_WINNER_CHECKPOINT",
             python_bin,
@@ -623,7 +623,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
             "payload.get('winner_config', {}).get('weight_decay')",
             "frozen winner weight decay missing",
         ),
-        'HALF_WINNER_LR="$(python3 - <<\'PY\'\nimport os\nprint(float(os.environ[\"FROZEN_WINNER_LR\"])/2.0)\nPY\n)"',
+        'HALF_WINNER_LR="$(python3 - "$FROZEN_WINNER_LR" <<\'PY\'\nimport sys\nprint(float(sys.argv[1]) / 2.0)\nPY\n)"',
         f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
     ]
     for variant in UNFREEZE_ABLATION_VARIANTS:
