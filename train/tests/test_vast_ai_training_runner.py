@@ -449,7 +449,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn('run_training_with_oom_retry "unfreeze_U1"', command)
         self.assertIn('FROZEN_WINNER_NAME="$(', command)
         self.assertIn('UNFREEZE_INPUT_SIZE="$(python3 - "$FROZEN_WINNER_INPUT_SIZE"', command)
-        self.assertIn("print(min(int(float(sys.argv[1])), 192))", command)
+        self.assertIn("print(min(int(float(sys.argv[1])), 160))", command)
         self.assertIn('if [ "$FROZEN_WINNER_NAME" != "F1" ]; then rm -rf train/output_models/checkpoints/dinov3_vit7b16/ablation/F1; fi', command)
         self.assertIn('if [ "$FROZEN_WINNER_NAME" != "F4" ]; then rm -rf train/output_models/checkpoints/dinov3_vit7b16/ablation/F4; fi', command)
         self.assertIn("--initialize-from $FROZEN_WINNER_CHECKPOINT", command)
