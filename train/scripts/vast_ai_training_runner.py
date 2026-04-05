@@ -463,6 +463,7 @@ def _oom_retry_shell_parts() -> list[str]:
     candidates = " ".join(str(candidate) for candidate in TRAIN_OOM_FALLBACK_BATCH_SIZE_CANDIDATES)
     oom_pattern = "CUDA out of memory|OutOfMemoryError|torch\\.OutOfMemoryError"
     return [
+        'export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"',
         "next_micro_batch() {",
         '  local current="$1"',
         f'  for candidate in {candidates}; do',
@@ -598,6 +599,32 @@ def _build_variant_keep_best_only_parts(
     ]
 
 
+def _build_prune_non_winner_variant_checkpoints_parts(
+    python_bin: str,
+    *,
+    summary_report_file: str,
+    summary_label: str,
+    variants: tuple[dict[str, object], ...],
+    variants_root_dir_file: str,
+) -> list[str]:
+    winner_name_var = f"{summary_label.upper()}_WINNER_NAME"
+    parts = [
+        _json_env_assignment(
+            winner_name_var,
+            python_bin,
+            summary_report_file,
+            "payload.get('winner_name')",
+            f"{summary_label} winner name missing",
+        )
+    ]
+    for variant in variants:
+        variant_name = str(variant["name"])
+        parts.append(
+            f'if [ "${winner_name_var}" != "{variant_name}" ]; then rm -rf {shlex.quote(f"{variants_root_dir_file}/{variant_name}")}; fi'
+        )
+    return parts
+
+
 def _build_frozen_ablation_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     parts = [
@@ -714,6 +741,13 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
             TRAIN_FROZEN_ABLATION_REPORT_FILE,
             "payload.get('winner_config', {}).get('weight_decay')",
             "frozen winner weight decay missing",
+        ),
+        *_build_prune_non_winner_variant_checkpoints_parts(
+            python_bin,
+            summary_report_file=TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            summary_label="frozen",
+            variants=FROZEN_ABLATION_VARIANTS,
+            variants_root_dir_file=f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation",
         ),
         'HALF_WINNER_LR="$(python3 - "$FROZEN_WINNER_LR" <<\'PY\'\nimport sys\nprint(float(sys.argv[1]) / 2.0)\nPY\n)"',
         f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",

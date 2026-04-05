@@ -33,11 +33,22 @@ if TORCH_AVAILABLE:
             self.config = types.SimpleNamespace(hidden_size=8)
             self.encoder = _FakeEncoder()
             self.layernorm = torch.nn.LayerNorm(8)
+            self.gradient_checkpointing_enabled = False
+            self.inputs_require_grads_enabled = False
 
         def forward(self, pixel_values: torch.Tensor) -> types.SimpleNamespace:
             return types.SimpleNamespace(
                 last_hidden_state=torch.stack((pixel_values, pixel_values * 2), dim=1)
             )
+
+        def gradient_checkpointing_enable(self) -> None:
+            self.gradient_checkpointing_enabled = True
+
+        def gradient_checkpointing_disable(self) -> None:
+            self.gradient_checkpointing_enabled = False
+
+        def enable_input_require_grads(self) -> None:
+            self.inputs_require_grads_enabled = True
 
 
 @unittest.skipUnless(TORCH_AVAILABLE, "torch is required for model tests")
@@ -121,3 +132,33 @@ class ModelTests(unittest.TestCase):
         )
         scores = model.predict_score(torch.arange(1, 17, dtype=torch.float32).reshape(2, 8))
         self.assertEqual(tuple(scores.shape), (2, 1))
+
+    def test_unfrozen_backbone_enables_gradient_checkpointing_and_sequential_pair_forward(self) -> None:
+        fake_transformers = types.SimpleNamespace(
+            AutoModel=types.SimpleNamespace(from_pretrained=mock.Mock(return_value=_FakeBackbone()))
+        )
+        spec = importlib.util.spec_from_file_location("mirip_training_models_gc_test", MODELS_PATH)
+        self.assertIsNotNone(spec)
+        module = importlib.util.module_from_spec(spec)
+
+        with mock.patch.dict(sys.modules, {"transformers": fake_transformers}):
+            assert spec and spec.loader
+            spec.loader.exec_module(module)
+
+        model = module.DinoV3PairwiseModel(
+            model_name="dummy-model",
+            head_type="linear",
+            feature_pool="cls_mean_patch_concat",
+            freeze_backbone=False,
+        )
+        self.assertTrue(model.feature_extractor.model.gradient_checkpointing_enabled)
+        self.assertTrue(model.feature_extractor.model.inputs_require_grads_enabled)
+
+        first = torch.ones((1, 1))
+        second = torch.zeros((1, 1))
+        with mock.patch.object(model, "predict_score", side_effect=[first, second]) as predict_score:
+            score1, score2 = model(torch.ones((1, 8)), torch.zeros((1, 8)))
+
+        self.assertEqual(predict_score.call_count, 2)
+        self.assertTrue(torch.equal(score1, first))
+        self.assertTrue(torch.equal(score2, second))

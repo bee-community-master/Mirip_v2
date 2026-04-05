@@ -44,8 +44,7 @@ class DinoV3Trainer:
         self.precision = resolve_precision(config.precision, "cuda" if self.device.type == "cuda" else "cpu")
         self.model.to(self.device)
 
-        optimizer_groups = self._build_optimizer_groups()
-        self.optimizer = AdamW(optimizer_groups, weight_decay=config.weight_decay)
+        self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16" and self.device.type == "cuda")
         self.best_val_loss = math.inf
@@ -102,6 +101,12 @@ class DinoV3Trainer:
             raise RuntimeError("No trainable parameters were found for optimization.")
         return optimizer_groups
 
+    def _build_optimizer(self) -> AdamW:
+        optimizer_groups = self._build_optimizer_groups()
+        # The foreach CUDA path keeps extra tensor lists alive during step(),
+        # which pushes peak memory over the 32 GB cards in unfreeze/full runs.
+        return AdamW(optimizer_groups, weight_decay=self.config.weight_decay, foreach=False)
+
     def _build_scheduler(self):
         if self.config.warmup_epochs > 0:
             warmup_scheduler = LinearLR(
@@ -128,8 +133,7 @@ class DinoV3Trainer:
         )
 
     def _reset_optimization_state(self) -> None:
-        optimizer_groups = self._build_optimizer_groups()
-        self.optimizer = AdamW(optimizer_groups, weight_decay=self.config.weight_decay)
+        self.optimizer = self._build_optimizer()
         self.scheduler = self._build_scheduler()
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.precision == "fp16" and self.device.type == "cuda")
         self.global_step = 0

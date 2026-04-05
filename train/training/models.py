@@ -54,6 +54,16 @@ class DinoV3FeatureExtractor(nn.Module):
                 self.freeze_backbone = False
             else:
                 self.model.eval()
+        self._configure_gradient_checkpointing()
+
+    def _configure_gradient_checkpointing(self) -> None:
+        enabled = not self.freeze_backbone
+        if enabled and hasattr(self.model, "enable_input_require_grads"):
+            self.model.enable_input_require_grads()
+        toggle_name = "gradient_checkpointing_enable" if enabled else "gradient_checkpointing_disable"
+        toggle = getattr(self.model, toggle_name, None)
+        if callable(toggle):
+            toggle()
 
     def _resolve_backbone_layers(self) -> list[nn.Module]:
         layer_candidates = (
@@ -235,6 +245,8 @@ class DinoV3PairwiseModel(nn.Module):
         return self.score_features(projected)
 
     def forward(self, img1: torch.Tensor, img2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if not self.feature_extractor.freeze_backbone:
+            return self.predict_score(img1), self.predict_score(img2)
         merged = torch.cat((img1, img2), dim=0)
         merged_scores = self.predict_score(merged)
         score1, score2 = torch.chunk(merged_scores, chunks=2, dim=0)

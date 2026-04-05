@@ -54,6 +54,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
                     "256",
                     "0.0003",
                     "0.0001",
+                    "F2",
                 ],
             ),
         ):
@@ -444,7 +445,11 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("frozen_ablation_summary.json", command)
         self.assertIn("select_ablation_winner.py", command)
         self.assertIn("run_training_with_oom_retry", command)
+        self.assertIn('export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"', command)
         self.assertIn('run_training_with_oom_retry "unfreeze_U1"', command)
+        self.assertIn('FROZEN_WINNER_NAME="$(', command)
+        self.assertIn('if [ "$FROZEN_WINNER_NAME" != "F1" ]; then rm -rf train/output_models/checkpoints/dinov3_vit7b16/ablation/F1; fi', command)
+        self.assertIn('if [ "$FROZEN_WINNER_NAME" != "F4" ]; then rm -rf train/output_models/checkpoints/dinov3_vit7b16/ablation/F4; fi', command)
         self.assertIn("--initialize-from $FROZEN_WINNER_CHECKPOINT", command)
         self.assertIn("--resume-from %s --resume-next-epoch", command)
         self.assertIn("--no-freeze-backbone", command)

@@ -74,6 +74,22 @@ class TrainerPostprocessTests(unittest.TestCase):
             self.assertTrue((Path(temp_dir) / "checkpoint_epoch_0002.pt").exists())
             self.assertEqual(Path(summary["latest_completed_checkpoint"]).name, "checkpoint_epoch_0002.pt")
 
+    def test_optimizer_uses_non_foreach_adamw_for_lower_peak_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = DinoV3TrainingConfig(
+                checkpoint_dir=temp_dir,
+                max_epochs=1,
+                batch_size=2,
+                gradient_accumulation_steps=1,
+                num_workers=0,
+                persistent_workers=False,
+                pin_memory=False,
+                device="cpu",
+                precision="fp32",
+            )
+            trainer = DinoV3Trainer(model=DummyPairwiseModel(), config=config)
+            self.assertIs(trainer.optimizer.defaults.get("foreach"), False)
+
     def test_resume_next_epoch_skips_repeating_completed_epoch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config = DinoV3TrainingConfig(
