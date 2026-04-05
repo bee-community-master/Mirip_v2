@@ -152,6 +152,93 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertNotIn("{find", command)
         self.assertNotIn("2>/dev/null find", command)
 
+    def test_hourly_checkpoint_janitor_script_keeps_overall_winner_and_full_best_latest(self) -> None:
+        supports_mapfile = subprocess.run(
+            ["bash", "-lc", "type mapfile >/dev/null 2>&1"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if supports_mapfile.returncode != 0:
+            self.skipTest("local bash does not support mapfile")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            remote_root = Path(temp_dir) / "remote_root"
+            logs_dir = remote_root / "train" / "output_models" / "logs"
+            checkpoints_root = remote_root / "train" / "output_models" / "checkpoints" / "dinov3_vit7b16"
+            frozen_dir = checkpoints_root / "ablation" / "F2"
+            u1_dir = checkpoints_root / "ablation" / "U1"
+            u2_dir = checkpoints_root / "ablation" / "U2"
+            full_dir = checkpoints_root / "full"
+            for directory in (logs_dir, frozen_dir, u1_dir, u2_dir, full_dir):
+                directory.mkdir(parents=True, exist_ok=True)
+
+            frozen_checkpoint = frozen_dir / "checkpoint_epoch_0006.pt"
+            frozen_checkpoint.write_text("frozen", encoding="utf-8")
+            (frozen_dir / "best_model.pt").symlink_to(frozen_checkpoint.name)
+
+            u1_checkpoint = u1_dir / "checkpoint_epoch_0003.pt"
+            u1_checkpoint.write_text("u1", encoding="utf-8")
+            (u1_dir / "best_model.pt").symlink_to(u1_checkpoint.name)
+
+            u2_checkpoint = u2_dir / "checkpoint_epoch_0003.pt"
+            u2_checkpoint.write_text("u2", encoding="utf-8")
+            (u2_dir / "best_model.pt").symlink_to(u2_checkpoint.name)
+
+            full_best_checkpoint = full_dir / "checkpoint_epoch_0003.pt"
+            full_best_checkpoint.write_text("full-best", encoding="utf-8")
+            full_old_checkpoint = full_dir / "checkpoint_epoch_0007.pt"
+            full_old_checkpoint.write_text("full-old", encoding="utf-8")
+            full_latest_checkpoint = full_dir / "checkpoint_epoch_0008.pt"
+            full_latest_checkpoint.write_text("full-latest", encoding="utf-8")
+            (full_dir / "best_model.pt").symlink_to(full_best_checkpoint.name)
+
+            (logs_dir / "dinov3_vit7b16_overall_winner.json").write_text(
+                json.dumps(
+                    {
+                        "winner_name": "frozen",
+                        "winner_checkpoint": "output_models/checkpoints/dinov3_vit7b16/ablation/F2/checkpoint_epoch_0006.pt",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            script_path = Path(temp_dir) / "hourly_checkpoint_janitor.sh"
+            script_path.write_text(
+                vast_ai_training_runner.build_hourly_checkpoint_janitor_script(str(remote_root)),
+                encoding="utf-8",
+            )
+
+            subprocess.run(
+                [
+                    "bash",
+                    "-lc",
+                    f'flock() {{ return 0; }}\nsource {shlex.quote(str(script_path))}',
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertTrue(frozen_checkpoint.exists())
+            self.assertEqual((frozen_dir / "best_model.pt").readlink(), Path("checkpoint_epoch_0006.pt"))
+            self.assertFalse(u1_dir.exists())
+            self.assertFalse(u2_dir.exists())
+            self.assertTrue(full_best_checkpoint.exists())
+            self.assertFalse(full_old_checkpoint.exists())
+            self.assertTrue(full_latest_checkpoint.exists())
+            self.assertEqual((full_dir / "best_model.pt").readlink(), Path("checkpoint_epoch_0003.pt"))
+
+    def test_build_install_remote_hourly_janitor_command_restarts_loop(self) -> None:
+        command = vast_ai_training_runner.build_install_remote_hourly_janitor_command("/workspace/mirip_v2")
+
+        self.assertIn("hourly_checkpoint_janitor.sh", command)
+        self.assertIn("hourly_checkpoint_janitor_loop.sh", command)
+        self.assertIn("dinov3_vit7b16_overall_winner.json", command)
+        self.assertIn('pkill -f "$LOOP_PATH"', command)
+        self.assertIn('nohup /bin/bash "$LOOP_PATH" >/dev/null 2>&1 &', command)
+        self.assertIn('printf "%s\\n" "$NEW_PID" > "$PID_FILE"', command)
+
     def test_build_launch_agent_payload_targets_sync_prune(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             config_path = Path(temp_dir) / "config.toml"

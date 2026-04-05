@@ -116,6 +116,10 @@ REMOTE_CHECKPOINT_ROOTS = (
     f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
     f"{LEGACY_CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
 )
+REMOTE_HOURLY_JANITOR_SCRIPT = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor.sh"
+REMOTE_HOURLY_JANITOR_LOOP_SCRIPT = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor_loop.sh"
+REMOTE_HOURLY_JANITOR_LOG = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor.log"
+REMOTE_HOURLY_JANITOR_PID = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor.pid"
 FROZEN_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
     {
         "name": "F1",
@@ -1125,9 +1129,193 @@ def build_remote_prune_command(
     return _bash_command(command_parts)
 
 
+def build_hourly_checkpoint_janitor_script(remote_root: str) -> str:
+    checkpoints_root = f"{remote_root}/{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}"
+    overall_winner_report = f"{remote_root}/{TRAIN_OVERALL_WINNER_REPORT_FILE}"
+    full_dir = f"{checkpoints_root}/full"
+    metadata_script = """import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+full_dir = Path(sys.argv[2])
+payload = json.loads(report_path.read_text(encoding="utf-8"))
+winner_checkpoint_value = payload.get("winner_checkpoint")
+if not winner_checkpoint_value:
+    raise SystemExit("winner_checkpoint missing from overall winner report")
+
+train_root = report_path.parents[2]
+winner_checkpoint_path = Path(winner_checkpoint_value)
+if not winner_checkpoint_path.is_absolute():
+    winner_checkpoint_path = train_root / winner_checkpoint_path
+winner_checkpoint_path = winner_checkpoint_path.resolve()
+if not winner_checkpoint_path.exists():
+    raise SystemExit(f"winner checkpoint missing: {winner_checkpoint_path}")
+
+keep_checkpoints = [winner_checkpoint_path]
+link_specs = [(winner_checkpoint_path.parent / "best_model.pt", winner_checkpoint_path.name)]
+
+if full_dir.exists():
+    full_checkpoints = sorted(full_dir.glob("checkpoint_epoch_*.pt"))
+    if full_checkpoints:
+        keep_checkpoints.append(full_checkpoints[-1].resolve())
+    full_best_link = full_dir / "best_model.pt"
+    if full_best_link.is_symlink():
+        full_best_target = full_best_link.resolve()
+        if full_best_target.exists():
+            keep_checkpoints.append(full_best_target)
+            link_specs.append((full_best_link, full_best_target.name))
+
+seen_checkpoints = set()
+for checkpoint in keep_checkpoints:
+    checkpoint_text = str(checkpoint)
+    if checkpoint_text in seen_checkpoints:
+        continue
+    seen_checkpoints.add(checkpoint_text)
+    print(f"KEEP\\t{checkpoint_text}")
+
+seen_links = set()
+for link_path, target_name in link_specs:
+    link_key = (str(link_path), str(target_name))
+    if link_key in seen_links:
+        continue
+    seen_links.add(link_key)
+    print(f"LINK\\t{link_path}\\t{target_name}")
+"""
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            f"ROOT={shlex.quote(checkpoints_root)}",
+            f"OVERALL_WINNER_REPORT={shlex.quote(overall_winner_report)}",
+            f"FULL_DIR={shlex.quote(full_dir)}",
+            'LOCK="/tmp/mirip-hourly-checkpoint-janitor.lock"',
+            'exec 9>"$LOCK"',
+            "if ! flock -n 9; then",
+            "  exit 0",
+            "fi",
+            "log() {",
+            "  printf '[%s] %s\\n' \"$(date '+%Y-%m-%d %H:%M:%S %Z')\" \"$*\"",
+            "}",
+            'if [ ! -f "$OVERALL_WINNER_REPORT" ]; then',
+            '  log "overall winner report missing; skipped"',
+            "  exit 0",
+            "fi",
+            "mapfile -t KEEP_METADATA < <(python3 - \"$OVERALL_WINNER_REPORT\" \"$FULL_DIR\" <<'PY'\n"
+            + metadata_script
+            + "\nPY\n)",
+            'if [ "${#KEEP_METADATA[@]}" -eq 0 ]; then',
+            '  log "no keep metadata resolved; skipped"',
+            "  exit 0",
+            "fi",
+            "KEEP_CHECKPOINTS=()",
+            "LINK_PATHS=()",
+            "LINK_TARGETS=()",
+            'for entry in "${KEEP_METADATA[@]}"; do',
+            "  IFS=$'\\t' read -r kind path target <<<\"$entry\"",
+            '  case "$kind" in',
+            '    KEEP) KEEP_CHECKPOINTS+=("$path") ;;',
+            '    LINK) LINK_PATHS+=("$path"); LINK_TARGETS+=("$target") ;;',
+            "  esac",
+            "done",
+            'if [ "${#KEEP_CHECKPOINTS[@]}" -eq 0 ]; then',
+            '  log "no checkpoints resolved for pruning; skipped"',
+            "  exit 0",
+            "fi",
+            'KEEP_FILE="$(mktemp)"',
+            'cleanup() { rm -f "$KEEP_FILE"; }',
+            "trap cleanup EXIT",
+            'printf "%s\\n" "${KEEP_CHECKPOINTS[@]}" | sort -u > "$KEEP_FILE"',
+            "deleted_checkpoints=0",
+            "deleted_links=0",
+            "while IFS= read -r -d '' checkpoint_path; do",
+            '  if grep -Fxq "$checkpoint_path" "$KEEP_FILE"; then',
+            "    continue",
+            "  fi",
+            '  rm -f -- "$checkpoint_path"',
+            "  deleted_checkpoints=$((deleted_checkpoints + 1))",
+            "done < <(find \"$ROOT\" -type f -name \"checkpoint_epoch_*.pt\" -print0)",
+            "while IFS= read -r -d '' best_link; do",
+            '  rm -f -- "$best_link"',
+            "  deleted_links=$((deleted_links + 1))",
+            "done < <(find \"$ROOT\" \\( -type l -o -type f \\) -name \"best_model.pt\" -print0)",
+            'for index in "${!LINK_PATHS[@]}"; do',
+            '  mkdir -p "$(dirname "${LINK_PATHS[$index]}")"',
+            '  ln -sfn "${LINK_TARGETS[$index]}" "${LINK_PATHS[$index]}"',
+            "done",
+            "deleted_dirs=0",
+            "while IFS= read -r empty_dir; do",
+            '  rmdir "$empty_dir" && deleted_dirs=$((deleted_dirs + 1)) || true',
+            "done < <(find \"$ROOT\" -mindepth 1 -depth -type d -empty | sort)",
+            'log "kept=$(paste -sd, "$KEEP_FILE") deleted_checkpoints=$deleted_checkpoints deleted_links=$deleted_links recreated_links=${#LINK_PATHS[@]} deleted_dirs=$deleted_dirs"',
+        ]
+    )
+
+
+def build_hourly_checkpoint_janitor_loop_script(remote_root: str) -> str:
+    janitor_script = f"{remote_root}/{REMOTE_HOURLY_JANITOR_SCRIPT}"
+    janitor_log = f"{remote_root}/{REMOTE_HOURLY_JANITOR_LOG}"
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "while true; do",
+            f'  /bin/bash {shlex.quote(janitor_script)} >> {shlex.quote(janitor_log)} 2>&1 || true',
+            "  sleep 3600",
+            "done",
+        ]
+    )
+
+
+def build_install_remote_hourly_janitor_command(remote_root: str) -> str:
+    janitor_script = build_hourly_checkpoint_janitor_script(remote_root)
+    loop_script = build_hourly_checkpoint_janitor_loop_script(remote_root)
+    janitor_script_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_SCRIPT}"
+    loop_script_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_LOOP_SCRIPT}"
+    pid_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_PID}"
+    return _bash_command(
+        [
+            "set -euo pipefail",
+            f"mkdir -p {shlex.quote(f'{remote_root}/{TRAIN_REPORTS_DIR}')}",
+            "cat > "
+            + shlex.quote(janitor_script_path)
+            + " <<'EOF_JANITOR'\n"
+            + janitor_script
+            + "\nEOF_JANITOR",
+            "cat > "
+            + shlex.quote(loop_script_path)
+            + " <<'EOF_JANITOR_LOOP'\n"
+            + loop_script
+            + "\nEOF_JANITOR_LOOP",
+            f"chmod +x {shlex.quote(janitor_script_path)} {shlex.quote(loop_script_path)}",
+            f'PID_FILE={shlex.quote(pid_path)}',
+            f'LOOP_PATH={shlex.quote(loop_script_path)}',
+            'if [ -f "$PID_FILE" ]; then',
+            '  OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"',
+            '  if [ -n "$OLD_PID" ]; then kill "$OLD_PID" 2>/dev/null || true; fi',
+            "fi",
+            'pkill -f "$LOOP_PATH" 2>/dev/null || true',
+            'nohup /bin/bash "$LOOP_PATH" >/dev/null 2>&1 &',
+            'NEW_PID=$!',
+            'printf "%s\\n" "$NEW_PID" > "$PID_FILE"',
+            'sleep 1',
+            'ps -p "$NEW_PID" -o pid=,cmd=',
+        ]
+    )
+
+
 def execute_remote_command_over_ssh(client: VastClient, instance_id: int, remote_command: str) -> int:
     host, port = get_connection_info(client, instance_id)
     return run_local_command(_ssh_command(host, port, remote_command))
+
+
+def install_remote_hourly_janitor(config_path: str, instance_id: int) -> int:
+    config = load_toml(str(_resolve_repo_path(config_path)))
+    remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
+    api_key = require_env("VAST_API_KEY")
+    client = VastClient(api_key)
+    command = build_install_remote_hourly_janitor_command(remote_root)
+    return execute_remote_command_over_ssh(client, instance_id, command)
 
 
 def sync_prune(config_path: str, instance_id: int) -> int:
@@ -1290,6 +1478,13 @@ def parse_args() -> argparse.Namespace:
     sync_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
     sync_cmd.add_argument("--instance-id", type=int)
 
+    janitor_cmd = subparsers.add_parser(
+        "install-remote-hourly-janitor",
+        help="Install and restart the remote hourly checkpoint janitor.",
+    )
+    janitor_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
+    janitor_cmd.add_argument("--instance-id", type=int)
+
     install_cmd = subparsers.add_parser("install-launch-agent", help="Install a 15-minute launchd sync/prune job.")
     install_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
 
@@ -1306,6 +1501,8 @@ def main() -> int:
         return pull_artifacts(args.config, resolve_instance_id(args.instance_id))
     if args.command == "sync-prune":
         return sync_prune(args.config, resolve_instance_id(args.instance_id))
+    if args.command == "install-remote-hourly-janitor":
+        return install_remote_hourly_janitor(args.config, resolve_instance_id(args.instance_id))
     if args.command == "install-launch-agent":
         return install_launch_agent(args.config)
     if args.command == "uninstall-launch-agent":
