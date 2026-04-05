@@ -742,6 +742,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
             "payload.get('winner_config', {}).get('weight_decay')",
             "frozen winner weight decay missing",
         ),
+        'UNFREEZE_INPUT_SIZE="$(python3 - "$FROZEN_WINNER_INPUT_SIZE" <<\'PY\'\nimport sys\nprint(min(int(float(sys.argv[1])), 224))\nPY\n)"',
         *_build_prune_non_winner_variant_checkpoints_parts(
             python_bin,
             summary_report_file=TRAIN_FROZEN_ABLATION_REPORT_FILE,
@@ -774,7 +775,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                 *_batch_probe_parts(
                     remote_root,
                     head_type="$FROZEN_WINNER_HEAD_TYPE",
-                    input_size="$FROZEN_WINNER_INPUT_SIZE",
+                    input_size="$UNFREEZE_INPUT_SIZE",
                     report_file=probe_report_file,
                 ),
                 *_build_oom_retry_train_parts(
@@ -782,7 +783,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                     checkpoint_dir=checkpoint_dir,
                     checkpoint_dir_file=checkpoint_dir_file,
                     initial_progress_args="--initialize-from $FROZEN_WINNER_CHECKPOINT",
-                    train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                    train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$UNFREEZE_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
                 ),
                 *_build_variant_keep_best_only_parts(
                     python_bin,
