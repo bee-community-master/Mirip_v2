@@ -745,7 +745,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
                     stage_label=f"unfreeze_{name}",
                     checkpoint_dir=checkpoint_dir,
                     checkpoint_dir_file=checkpoint_dir_file,
-                    initial_progress_args='--initialize-from "$FROZEN_WINNER_CHECKPOINT"',
+                    initial_progress_args="--initialize-from $FROZEN_WINNER_CHECKPOINT",
                     train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$FROZEN_WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
                 ),
                 *_build_variant_keep_best_only_parts(

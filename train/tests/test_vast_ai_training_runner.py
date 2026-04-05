@@ -413,7 +413,7 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("select_ablation_winner.py", command)
         self.assertIn("run_training_with_oom_retry", command)
         self.assertIn('run_training_with_oom_retry "unfreeze_U1"', command)
-        self.assertIn("--initialize-from \"$FROZEN_WINNER_CHECKPOINT\"", command)
+        self.assertIn("--initialize-from $FROZEN_WINNER_CHECKPOINT", command)
         self.assertIn("--resume-from %s --resume-next-epoch", command)
         self.assertIn("--no-freeze-backbone", command)
         self.assertIn("ablation/U1", command)
