@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import shlex
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,6 +63,36 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn('python3 - "$FROZEN_WINNER_LR"', command)
         self.assertNotIn("os.environ['FROZEN_WINNER_METRIC']", command)
         self.assertNotIn('os.environ["FROZEN_WINNER_LR"]', command)
+
+    def test_resolve_stage_progress_args_expands_initializer_variables(self) -> None:
+        checkpoint_dir = Path(tempfile.mkdtemp(prefix="vast-runner-empty-checkpoints-"))
+        script = "\n".join(
+            [
+                "set -euo pipefail",
+                *vast_ai_training_runner._oom_retry_shell_parts(),
+                'FROZEN_WINNER_CHECKPOINT="output_models/checkpoints/dinov3_vit7b16/ablation/F2/checkpoint_epoch_0006.pt"',
+                "resolve_stage_progress_args "
+                + " ".join(
+                    [
+                        shlex.quote("output_models/checkpoints/dinov3_vit7b16/ablation/U1"),
+                        shlex.quote(str(checkpoint_dir)),
+                        shlex.quote("--initialize-from $FROZEN_WINNER_CHECKPOINT"),
+                    ]
+                ),
+            ]
+        )
+
+        completed = subprocess.run(
+            ["bash", "-lc", script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertEqual(
+            completed.stdout.strip(),
+            "--initialize-from output_models/checkpoints/dinov3_vit7b16/ablation/F2/checkpoint_epoch_0006.pt",
+        )
 
     def test_load_env_file_sets_instance_id_without_overwriting_existing_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
