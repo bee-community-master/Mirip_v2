@@ -156,9 +156,13 @@ class ModelTests(unittest.TestCase):
 
         first = torch.ones((1, 1))
         second = torch.zeros((1, 1))
-        with mock.patch.object(model, "predict_score", side_effect=[first, second]) as predict_score:
+        with (
+            mock.patch.object(module, "checkpoint", side_effect=lambda fn, *args, **kwargs: fn(*args)) as checkpoint_fn,
+            mock.patch.object(model, "predict_score", side_effect=[first, second]) as predict_score,
+        ):
             score1, score2 = model(torch.ones((1, 8)), torch.zeros((1, 8)))
 
+        self.assertEqual(checkpoint_fn.call_count, 2)
         self.assertEqual(predict_score.call_count, 2)
         self.assertTrue(torch.equal(score1, first))
         self.assertTrue(torch.equal(score2, second))

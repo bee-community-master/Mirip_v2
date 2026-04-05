@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from transformers import AutoModel
 
 
@@ -244,9 +245,17 @@ class DinoV3PairwiseModel(nn.Module):
         projected = self.project_features(features)
         return self.score_features(projected)
 
+    def _predict_score_with_activation_checkpoint(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        if self.feature_extractor.freeze_backbone or not self.training:
+            return self.predict_score(pixel_values)
+        return checkpoint(self.predict_score, pixel_values, use_reentrant=False)
+
     def forward(self, img1: torch.Tensor, img2: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         if not self.feature_extractor.freeze_backbone:
-            return self.predict_score(img1), self.predict_score(img2)
+            return (
+                self._predict_score_with_activation_checkpoint(img1),
+                self._predict_score_with_activation_checkpoint(img2),
+            )
         merged = torch.cat((img1, img2), dim=0)
         merged_scores = self.predict_score(merged)
         score1, score2 = torch.chunk(merged_scores, chunks=2, dim=0)

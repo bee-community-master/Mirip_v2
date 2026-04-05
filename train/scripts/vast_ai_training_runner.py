@@ -36,6 +36,7 @@ ANCHORS_REL_DIR = f"{OUTPUT_MODELS_REL_DIR}/anchors"
 TRAIN_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
 TRAIN_MODEL_SLUG = "dinov3_vit7b16"
 TRAIN_DEFAULT_INPUT_SIZE = 256
+TRAIN_UNFREEZE_MAX_INPUT_SIZE = 192
 TRAIN_FEATURE_POOL = "cls_mean_patch_concat"
 TRAIN_EFFECTIVE_BATCH_SIZE = 64
 TRAIN_BATCH_SIZE_CANDIDATES = "8,6,4,2"
@@ -153,7 +154,7 @@ UNFREEZE_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
     },
     {
         "name": "U2",
-        "unfreeze_last_n_layers": 2,
+        "unfreeze_last_n_layers": 1,
         "backbone_learning_rate_scale": 0.02,
     },
 )
@@ -742,7 +743,7 @@ def _build_unfreeze_ablation_command(remote_root: str) -> str:
             "payload.get('winner_config', {}).get('weight_decay')",
             "frozen winner weight decay missing",
         ),
-        'UNFREEZE_INPUT_SIZE="$(python3 - "$FROZEN_WINNER_INPUT_SIZE" <<\'PY\'\nimport sys\nprint(min(int(float(sys.argv[1])), 224))\nPY\n)"',
+        'UNFREEZE_INPUT_SIZE="$(python3 - "$FROZEN_WINNER_INPUT_SIZE" <<\'PY\'\nimport sys\nprint(min(int(float(sys.argv[1])), ' + str(TRAIN_UNFREEZE_MAX_INPUT_SIZE) + '))\nPY\n)"',
         *_build_prune_non_winner_variant_checkpoints_parts(
             python_bin,
             summary_report_file=TRAIN_FROZEN_ABLATION_REPORT_FILE,
