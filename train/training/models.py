@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -123,6 +125,76 @@ class DinoV3FeatureExtractor(nn.Module):
                 norm.train(mode)
         return self
 
+    def _resolve_partial_forward_components(self) -> tuple[nn.Module, list[nn.Module], nn.Module, nn.Module | None] | None:
+        candidates = (
+            (
+                getattr(self.model, "embeddings", None),
+                getattr(self.model, "layer", None),
+                getattr(self.model, "norm", None),
+                getattr(self.model, "rope_embeddings", None),
+            ),
+            (
+                getattr(self.model, "embeddings", None),
+                getattr(getattr(self.model, "encoder", None), "layer", None),
+                getattr(self.model, "layernorm", None),
+                None,
+            ),
+            (
+                getattr(getattr(self.model, "vision_model", None), "embeddings", None),
+                getattr(getattr(getattr(self.model, "vision_model", None), "encoder", None), "layer", None),
+                getattr(getattr(self.model, "vision_model", None), "layernorm", None),
+                None,
+            ),
+            (
+                getattr(getattr(self.model, "vision_model", None), "embeddings", None),
+                getattr(getattr(self.model, "vision_model", None), "layer", None),
+                getattr(getattr(self.model, "vision_model", None), "norm", None),
+                getattr(getattr(self.model, "vision_model", None), "rope_embeddings", None),
+            ),
+        )
+        for embeddings, layers, norm, rope_embeddings in candidates:
+            if embeddings is None or layers is None or norm is None:
+                continue
+            try:
+                return embeddings, list(layers), norm, rope_embeddings
+            except TypeError:
+                continue
+        return None
+
+    @staticmethod
+    def _forward_backbone_layer(
+        layer: nn.Module,
+        hidden_states: torch.Tensor,
+        position_embeddings: tuple[torch.Tensor, torch.Tensor] | None,
+    ) -> torch.Tensor:
+        layer_signature = inspect.signature(layer.forward)
+        if "position_embeddings" in layer_signature.parameters:
+            return layer(hidden_states, position_embeddings=position_embeddings)
+        return layer(hidden_states)
+
+    def _forward_partially_frozen_backbone(self, pixel_values: torch.Tensor) -> torch.Tensor | None:
+        if self.freeze_backbone or self.unfreeze_last_n_layers <= 0:
+            return None
+        components = self._resolve_partial_forward_components()
+        if components is None:
+            return None
+        embeddings, backbone_layers, final_norm, rope_embeddings = components
+        total_layers = len(backbone_layers)
+        if self.unfreeze_last_n_layers >= total_layers:
+            return None
+        frozen_prefix_count = total_layers - self.unfreeze_last_n_layers
+
+        with torch.no_grad():
+            hidden_states = embeddings(pixel_values)
+            position_embeddings = rope_embeddings(pixel_values) if rope_embeddings is not None else None
+            for layer in backbone_layers[:frozen_prefix_count]:
+                hidden_states = self._forward_backbone_layer(layer, hidden_states, position_embeddings)
+
+        hidden_states = hidden_states.detach()
+        for layer in backbone_layers[frozen_prefix_count:]:
+            hidden_states = self._forward_backbone_layer(layer, hidden_states, position_embeddings)
+        return final_norm(hidden_states)
+
     def _pool_last_hidden_state(self, last_hidden_state: torch.Tensor) -> torch.Tensor:
         cls_features = last_hidden_state[:, 0, :]
         if self.feature_pool == "cls":
@@ -144,6 +216,9 @@ class DinoV3FeatureExtractor(nn.Module):
             with torch.no_grad():
                 outputs = self.model(pixel_values=pixel_values)
         else:
+            last_hidden_state = self._forward_partially_frozen_backbone(pixel_values)
+            if last_hidden_state is not None:
+                return self._pool_last_hidden_state(last_hidden_state)
             outputs = self.model(pixel_values=pixel_values)
 
         last_hidden_state = getattr(outputs, "last_hidden_state", None)
