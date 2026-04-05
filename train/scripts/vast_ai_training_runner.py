@@ -148,12 +148,12 @@ FROZEN_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
 UNFREEZE_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
     {
         "name": "U1",
-        "unfreeze_last_n_layers": 2,
+        "unfreeze_last_n_layers": 1,
         "backbone_learning_rate_scale": 0.05,
     },
     {
         "name": "U2",
-        "unfreeze_last_n_layers": 4,
+        "unfreeze_last_n_layers": 2,
         "backbone_learning_rate_scale": 0.02,
     },
 )

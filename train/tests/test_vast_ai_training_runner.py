@@ -453,6 +453,8 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
         self.assertIn("--initialize-from $FROZEN_WINNER_CHECKPOINT", command)
         self.assertIn("--resume-from %s --resume-next-epoch", command)
         self.assertIn("--no-freeze-backbone", command)
+        self.assertIn("--unfreeze-last-n-layers 1", command)
+        self.assertIn("--unfreeze-last-n-layers 2", command)
         self.assertIn("ablation/U1", command)
         self.assertIn("ablation/U2", command)
         self.assertIn('find train/output_models/checkpoints/dinov3_vit7b16/ablation/U1 -maxdepth 1 -type f -name "checkpoint_epoch_*.pt"', command)
