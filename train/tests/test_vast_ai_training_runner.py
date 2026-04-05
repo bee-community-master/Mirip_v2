@@ -95,6 +95,29 @@ class VastAiTrainingRunnerTests(unittest.TestCase):
             "--initialize-from output_models/checkpoints/dinov3_vit7b16/ablation/F2/checkpoint_epoch_0006.pt",
         )
 
+    def test_json_value_command_allows_zero_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            json_path = Path(temp_dir) / "payload.json"
+            json_path.write_text(
+                json.dumps({"winner_config": {"unfreeze_last_n_layers": 0}}),
+                encoding="utf-8",
+            )
+            script = vast_ai_training_runner._json_value_command(
+                "python3",
+                str(json_path),
+                "payload.get('winner_config', {}).get('unfreeze_last_n_layers', 0)",
+                "winner unfreeze depth missing from overall winner report",
+            )
+
+            completed = subprocess.run(
+                ["bash", "-lc", f'VALUE={script}\nprintf "%s" "$VALUE"'],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(completed.stdout, "0")
+
     def test_load_env_file_sets_instance_id_without_overwriting_existing_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             env_path = Path(temp_dir) / ".env"

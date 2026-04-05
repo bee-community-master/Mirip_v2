@@ -342,7 +342,7 @@ def _json_value_command(python_bin: str, json_path: str, expression: str, error_
             "from pathlib import Path",
             f"payload = json.loads(Path({json_path!r}).read_text(encoding='utf-8'))",
             f"value = {expression}",
-            "if not value:",
+            "if value is None or value == '':",
             f"    raise SystemExit({error_message!r})",
             "print(value)",
         ]
