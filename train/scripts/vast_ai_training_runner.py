@@ -1273,21 +1273,21 @@ def build_install_remote_hourly_janitor_command(remote_root: str) -> str:
     janitor_script_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_SCRIPT}"
     loop_script_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_LOOP_SCRIPT}"
     pid_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_PID}"
+    write_script = "\n".join(
+        [
+            "from pathlib import Path",
+            f"files = [({janitor_script_path!r}, {janitor_script!r}), ({loop_script_path!r}, {loop_script!r})]",
+            "for path_text, content in files:",
+            "    path = Path(path_text)",
+            "    path.parent.mkdir(parents=True, exist_ok=True)",
+            "    path.write_text(content, encoding='utf-8')",
+            "    path.chmod(0o755)",
+        ]
+    )
     return _bash_command(
         [
             "set -euo pipefail",
-            f"mkdir -p {shlex.quote(f'{remote_root}/{TRAIN_REPORTS_DIR}')}",
-            "cat > "
-            + shlex.quote(janitor_script_path)
-            + " <<'EOF_JANITOR'\n"
-            + janitor_script
-            + "\nEOF_JANITOR",
-            "cat > "
-            + shlex.quote(loop_script_path)
-            + " <<'EOF_JANITOR_LOOP'\n"
-            + loop_script
-            + "\nEOF_JANITOR_LOOP",
-            f"chmod +x {shlex.quote(janitor_script_path)} {shlex.quote(loop_script_path)}",
+            "python3 - <<'PY'\n" + write_script + "\nPY",
             f'PID_FILE={shlex.quote(pid_path)}',
             f'LOOP_PATH={shlex.quote(loop_script_path)}',
             'if [ -f "$PID_FILE" ]; then',
