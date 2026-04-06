@@ -58,7 +58,7 @@ def resolve_instance_id(instance_id: int | None) -> int:
         return instance_id
     value = os.getenv("VAST_INSTANCE_ID")
     if not value:
-        raise SystemExit("Missing Vast instance id. Pass --instance-id or set VAST_INSTANCE_ID in train/.env.")
+        raise SystemExit("Missing Vast instance id. Pass --instance-id or set VAST_INSTANCE_ID in .env.")
     try:
         return int(value)
     except ValueError as exc:
