@@ -29,7 +29,7 @@ DISTILL_DIR = f"{TRAIN_ROOT}/distillation"
 DISTILL_CONFIG_PATH = f"{TRAIN_ROOT}/configs/vast_dinov3_vitl_distill_5090.toml"
 TRAIN_REPORTS_DIR = f"{TRAIN_ROOT}/reports"
 TRAIN_CHECKPOINTS_DIR = f"{TRAIN_ROOT}/checkpoints"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = ROOT / "train" / ".env"
 
 
 def _resolve_repo_path(path: str | Path) -> Path:
@@ -58,7 +58,7 @@ def resolve_instance_id(instance_id: int | None) -> int:
         return instance_id
     value = os.getenv("VAST_INSTANCE_ID")
     if not value:
-        raise SystemExit("Missing Vast instance id. Pass --instance-id or set VAST_INSTANCE_ID in .env.")
+        raise SystemExit("Missing Vast instance id. Pass --instance-id or set VAST_INSTANCE_ID in train/.env.")
     try:
         return int(value)
     except ValueError as exc:

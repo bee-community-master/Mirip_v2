@@ -103,7 +103,7 @@ TRAIN_BATCH_PROBE_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_p
 TRAIN_ANCHOR_ENRICHMENT_REPORT = f"{REPORTS_REL_DIR}/anchor_group_enrichment_report.json"
 TRAIN_ANCHOR_ENRICHMENT_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/anchor_group_enrichment_report.json"
 TRAIN_ARCHIVE_DIR = f"{TRAIN_OUTPUT_MODELS_DIR}/archive"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = ROOT / "train" / ".env"
 LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 SYNC_LOG_DIR = ROOT / OUTPUT_MODELS_REL_DIR / "logs" / "vast_sync"
@@ -235,7 +235,7 @@ def resolve_instance_id(instance_id: int | None) -> int:
         return instance_id
     value = os.getenv("VAST_INSTANCE_ID")
     if not value:
-        raise SystemExit("Missing Vast instance id. Pass --instance-id or set VAST_INSTANCE_ID in .env.")
+        raise SystemExit("Missing Vast instance id. Pass --instance-id or set VAST_INSTANCE_ID in train/.env.")
     try:
         return int(value)
     except ValueError as exc:
