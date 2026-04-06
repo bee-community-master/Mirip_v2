@@ -7,7 +7,7 @@ from typing import Any
 import torch
 from torch.utils.data import DataLoader
 
-from .anchors import build_anchor_store, evaluate_anchor_tier_accuracy
+from .anchors import evaluate_anchor_tier_accuracy_bootstrap
 from .config import DEFAULT_DINOV3_MODEL_NAME, DinoV3TrainingConfig
 from .datasets import DinoPairBatchCollator, DinoPairDataset
 from .evaluation import evaluate_pairwise
@@ -90,7 +90,7 @@ def run_postprocess_for_checkpoint(
     image_root: str | Path,
     anchors_output: str | Path,
     report_output: str | Path,
-    registry_output: str | Path,
+    registry_output: str | Path | None = None,
     best_checkpoint: str | Path | None = None,
     best_report: str | Path | None = None,
     batch_size: int,
@@ -119,12 +119,17 @@ def run_postprocess_for_checkpoint(
     model_name = _resolve_model_name(runtime_config)
     input_size = int(runtime_config.get("input_size", 448))
 
-    anchors = build_anchor_store(
+    anchors, anchor_metrics = evaluate_anchor_tier_accuracy_bootstrap(
         model=runtime_model,
-        metadata_csv=metadata_train,
+        metadata_train_csv=metadata_train,
+        metadata_eval_csv=metadata_eval,
         image_root=image_root,
         model_name=model_name,
         input_size=input_size,
+        n_per_tier=int(runtime_config.get("anchor_eval_n_per_tier", 24)),
+        seeds=[int(seed) for seed in runtime_config.get("anchor_eval_bootstrap_seeds", [42, 43, 44])],
+        precision=precision,
+        group_balanced=bool(runtime_config.get("anchor_eval_group_balanced", True)),
         source_checkpoint=checkpoint_path,
     )
     anchors_output_path = anchors.save(anchors_output)
@@ -140,17 +145,7 @@ def run_postprocess_for_checkpoint(
     )
 
     metrics = evaluate_pairwise(model=runtime_model, loader=loader, device=device, precision=precision)
-    metrics.update(
-        evaluate_anchor_tier_accuracy(
-            model=runtime_model,
-            anchors=anchors,
-            metadata_csv=metadata_eval,
-            image_root=image_root,
-            model_name=model_name,
-            input_size=input_size,
-            precision=precision,
-        )
-    )
+    metrics.update(anchor_metrics)
 
     payload = _build_postprocess_payload(
         checkpoint_path=checkpoint_path,
@@ -162,13 +157,16 @@ def run_postprocess_for_checkpoint(
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    registry_payload = update_postprocess_registry(
-        current_checkpoint=checkpoint_path,
-        current_report=report_path,
-        output_registry=registry_output,
-        best_checkpoint=best_checkpoint,
-        best_report=best_report,
-    )
+    registry_payload = None
+    if registry_output is not None:
+        registry_payload = update_postprocess_registry(
+            current_checkpoint=checkpoint_path,
+            current_report=report_path,
+            output_registry=registry_output,
+            best_checkpoint=best_checkpoint,
+            best_report=best_report,
+            min_improvement=float(runtime_config.get("anchor_eval_min_improvement", 0.0)),
+        )
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     return {

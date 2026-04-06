@@ -29,7 +29,7 @@ DISTILL_DIR = f"{TRAIN_ROOT}/distillation"
 DISTILL_CONFIG_PATH = f"{TRAIN_ROOT}/configs/vast_dinov3_vitl_distill_5090.toml"
 TRAIN_REPORTS_DIR = f"{TRAIN_ROOT}/reports"
 TRAIN_CHECKPOINTS_DIR = f"{TRAIN_ROOT}/checkpoints"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = ROOT / "train" / ".env"
 
 
 def _resolve_repo_path(path: str | Path) -> Path:

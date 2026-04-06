@@ -56,10 +56,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-persistent-workers", action="store_true")
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--early-stopping-metric", default="anchor_tier_accuracy", choices=["val_loss", "anchor_tier_accuracy"])
+    parser.add_argument("--restart-from-best-patience", type=int, default=0)
+    parser.add_argument("--anchor-eval-n-per-tier", type=int, default=24)
+    parser.add_argument("--anchor-eval-bootstrap-seeds", default="42,43,44")
+    parser.add_argument("--anchor-eval-min-improvement", type=float, default=0.005)
+    parser.add_argument("--anchor-eval-group-balanced", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--precision", default="bf16", choices=["auto", "bf16", "fp16", "fp32"])
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--resume-from")
+    parser.add_argument("--initialize-from")
     parser.add_argument("--resume-next-epoch", action="store_true")
     parser.add_argument("--reset-training-state-on-resume", action="store_true")
     parser.add_argument("--wandb-project", default="mirip-v2-dinov3")
@@ -74,6 +80,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--postprocess-best-checkpoint")
     parser.add_argument("--postprocess-best-report")
     return parser.parse_args()
+
+
+def parse_anchor_eval_bootstrap_seeds(raw_value: str) -> list[int]:
+    seeds = [token.strip() for token in raw_value.split(",") if token.strip()]
+    if not seeds:
+        raise SystemExit("anchor eval bootstrap seeds must not be empty")
+    try:
+        return [int(seed) for seed in seeds]
+    except ValueError as exc:
+        raise SystemExit(f"Invalid anchor eval bootstrap seeds: {raw_value!r}") from exc
 
 
 def resolve_postprocess_kwargs(
@@ -126,6 +142,8 @@ def main() -> int:
         raise SystemExit(str(exc)) from exc
     args.model_name = resolved_model_name
 
+    anchor_eval_bootstrap_seeds = parse_anchor_eval_bootstrap_seeds(args.anchor_eval_bootstrap_seeds)
+
     config = DinoV3TrainingConfig(
         model_name=resolved_model_name,
         backbone_dtype=args.backbone_dtype,
@@ -138,6 +156,11 @@ def main() -> int:
         warmup_epochs=args.warmup_epochs,
         early_stopping_patience=args.patience,
         early_stopping_metric=args.early_stopping_metric,
+        restart_from_best_patience=args.restart_from_best_patience,
+        anchor_eval_n_per_tier=args.anchor_eval_n_per_tier,
+        anchor_eval_bootstrap_seeds=anchor_eval_bootstrap_seeds,
+        anchor_eval_min_improvement=args.anchor_eval_min_improvement,
+        anchor_eval_group_balanced=args.anchor_eval_group_balanced,
         checkpoint_dir=args.output_dir,
         num_workers=args.num_workers,
         persistent_workers=not args.no_persistent_workers,
@@ -210,6 +233,9 @@ def main() -> int:
         freeze_backbone=config.freeze_backbone,
         backbone_dtype=config.backbone_dtype,
     )
+    if args.initialize_from:
+        checkpoint = torch.load(resolve_project_path(args.initialize_from), map_location="cpu")
+        model.load_state_dict(checkpoint["model_state_dict"])
     trainer = DinoV3Trainer(
         model=model,
         config=config,

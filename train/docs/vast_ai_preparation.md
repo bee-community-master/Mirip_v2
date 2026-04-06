@@ -80,7 +80,7 @@ SSH/Jupyter 런타입은 Docker entrypoint를 Vast 쪽 초기화 스크립트로
 
 - `train/.env`에 `VAST_INSTANCE_ID`를 추가하고 기존 Vast API/SSH 키 설정과 같이 관리한다.
 - local 반복 작업은 `python3 train/scripts/vast_ai_training_runner.py sync-prune`를 사용한다.
-- 이 작업은 remote reports를 local로 먼저 내려받고, `train/output_models/logs/dinov3_vit7b16_postprocess_registry.json`을 읽어 remote `best + latest`만 남긴다.
+- 이 작업은 remote reports를 local로 먼저 내려받고, overall winner checkpoint와 full 기준 `best + latest`만 remote에 남긴다.
 - best 판정은 hourly 작업에서 다시 평가하지 않고, full 후처리 단계가 남긴 registry를 그대로 사용한다.
 - macOS background 실행은 `install-launch-agent` / `uninstall-launch-agent` 서브커맨드로 관리한다.
 

@@ -35,10 +35,12 @@ CHECKPOINTS_REL_DIR = f"{OUTPUT_MODELS_REL_DIR}/checkpoints"
 ANCHORS_REL_DIR = f"{OUTPUT_MODELS_REL_DIR}/anchors"
 TRAIN_MODEL_NAME = "PIA-SPACE-LAB/dinov3-vit7b16-pretrain-lvd1689m"
 TRAIN_MODEL_SLUG = "dinov3_vit7b16"
-TRAIN_INPUT_SIZE = 448
+TRAIN_DEFAULT_INPUT_SIZE = 256
+TRAIN_UNFREEZE_MAX_INPUT_SIZE = 144
 TRAIN_FEATURE_POOL = "cls_mean_patch_concat"
 TRAIN_EFFECTIVE_BATCH_SIZE = 64
 TRAIN_BATCH_SIZE_CANDIDATES = "8,6,4,2"
+TRAIN_OOM_FALLBACK_BATCH_SIZE_CANDIDATES = (8, 6, 4, 2, 1)
 TRAIN_NUM_WORKERS = 8
 TRAIN_PREFETCH_FACTOR = 4
 TRAIN_BUILD_PAIRS_TRAIN_RATIO = 0.8
@@ -49,10 +51,26 @@ TRAIN_BUILD_PAIRS_MAX_APPEARANCES = 48
 TRAIN_DISTANCE1_RATIO = 0.6
 TRAIN_DISTANCE2_RATIO = 0.3
 TRAIN_DISTANCE3_RATIO = 0.1
+TRAIN_TIER_PAIR_MIN_AS = 4_000
+TRAIN_TIER_PAIR_MIN_BC = 4_000
+TRAIN_TIER_PAIR_MIN_AC = 3_000
+TRAIN_TIER_PAIR_MIN_CS = 3_000
+TRAIN_TIER_PAIR_CAP_AB = 18_000
+VAL_TIER_PAIR_MIN_AS = 400
+VAL_TIER_PAIR_MIN_BC = 400
+VAL_TIER_PAIR_MIN_AC = 300
+VAL_TIER_PAIR_MIN_CS = 300
+VAL_TIER_PAIR_CAP_AB = 2_250
+TRAIN_ANCHOR_EVAL_N_PER_TIER = 24
+TRAIN_ANCHOR_EVAL_BOOTSTRAP_SEEDS = "42,43,44"
+TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT = 0.005
 READINESS_REPORT_PATH = f"{REPORTS_REL_DIR}/readiness_report.json"
 SNAPSHOT_REPORT_PATH = f"{REPORTS_REL_DIR}/snapshot_report.json"
 PREPARED_READINESS_REPORT_PATH = f"{REPORTS_REL_DIR}/prepared_readiness_report.json"
 TRAIN_SNAPSHOT_MANIFEST = "training/data/snapshot_manifest.csv"
+TRAIN_PREPARED_PAIRS_VAL = "training/data/pairs_val.csv"
+TRAIN_PREPARED_METADATA_TRAIN = "training/data/metadata_train.csv"
+TRAIN_PREPARED_METADATA_VAL = "training/data/metadata_val.csv"
 TRAIN_FULL_TRAIN_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_train.json"
 TRAIN_FULL_TRAIN_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_full_train.json"
 TRAIN_FULL_CANDIDATE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_candidate.json"
@@ -69,10 +87,23 @@ TRAIN_FULL_FINAL_ANCHOR_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_full_anc
 TRAIN_FULL_FINAL_ANCHOR_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_full_anchors.json"
 TRAIN_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_summary.json"
 TRAIN_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_summary.json"
+TRAIN_FROZEN_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_frozen_ablation_summary.json"
+TRAIN_FROZEN_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_frozen_ablation_summary.json"
+TRAIN_UNFREEZE_ABLATION_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_unfreeze_ablation_summary.json"
+TRAIN_UNFREEZE_ABLATION_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_unfreeze_ablation_summary.json"
+TRAIN_OVERALL_WINNER_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_overall_winner.json"
+TRAIN_OVERALL_WINNER_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_overall_winner.json"
+TRAIN_BASELINE_CHECKPOINT = f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full/checkpoint_epoch_0010.pt"
+TRAIN_BASELINE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline.json"
+TRAIN_BASELINE_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline.json"
+TRAIN_BASELINE_ANCHORS = f"{ANCHORS_REL_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline_anchors.pt"
+TRAIN_BASELINE_ANCHORS_FILE = f"{TRAIN_ANCHORS_DIR}/{TRAIN_MODEL_SLUG}_epoch10_robust_baseline_anchors.pt"
 TRAIN_BATCH_PROBE_REPORT = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_batch_probe.json"
 TRAIN_BATCH_PROBE_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe.json"
+TRAIN_ANCHOR_ENRICHMENT_REPORT = f"{REPORTS_REL_DIR}/anchor_group_enrichment_report.json"
+TRAIN_ANCHOR_ENRICHMENT_REPORT_FILE = f"{TRAIN_REPORTS_DIR}/anchor_group_enrichment_report.json"
 TRAIN_ARCHIVE_DIR = f"{TRAIN_OUTPUT_MODELS_DIR}/archive"
-ENV_PATH = ROOT / ".env"
+ENV_PATH = ROOT / "train" / ".env"
 LAUNCH_AGENT_LABEL = "com.mirip.vast-checkpoint-sync"
 LAUNCH_AGENT_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
 SYNC_LOG_DIR = ROOT / OUTPUT_MODELS_REL_DIR / "logs" / "vast_sync"
@@ -85,24 +116,50 @@ REMOTE_CHECKPOINT_ROOTS = (
     f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
     f"{LEGACY_CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
 )
-ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
+REMOTE_HOURLY_JANITOR_SCRIPT = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor.sh"
+REMOTE_HOURLY_JANITOR_LOOP_SCRIPT = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor_loop.sh"
+REMOTE_HOURLY_JANITOR_LOG = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor.log"
+REMOTE_HOURLY_JANITOR_PID = f"{TRAIN_REPORTS_DIR}/hourly_checkpoint_janitor.pid"
+FROZEN_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
     {
-        "name": "A",
+        "name": "F1",
+        "input_size": 256,
         "head_type": "linear",
         "learning_rate": 1e-3,
         "weight_decay": 1e-3,
     },
     {
-        "name": "B",
+        "name": "F2",
+        "input_size": 256,
+        "head_type": "linear",
+        "learning_rate": 3e-4,
+        "weight_decay": 1e-4,
+    },
+    {
+        "name": "F3",
+        "input_size": 256,
         "head_type": "mlp_small",
         "learning_rate": 3e-4,
         "weight_decay": 1e-4,
     },
     {
-        "name": "C",
-        "head_type": "mlp_small",
-        "learning_rate": 1e-4,
-        "weight_decay": 1e-4,
+        "name": "F4",
+        "input_size": 320,
+        "head_type": "linear",
+        "learning_rate": 1e-3,
+        "weight_decay": 1e-3,
+    },
+)
+UNFREEZE_ABLATION_VARIANTS: tuple[dict[str, object], ...] = (
+    {
+        "name": "U1",
+        "unfreeze_last_n_layers": 1,
+        "backbone_learning_rate_scale": 0.05,
+    },
+    {
+        "name": "U2",
+        "unfreeze_last_n_layers": 1,
+        "backbone_learning_rate_scale": 0.02,
     },
 )
 
@@ -289,12 +346,23 @@ def _json_value_command(python_bin: str, json_path: str, expression: str, error_
             "from pathlib import Path",
             f"payload = json.loads(Path({json_path!r}).read_text(encoding='utf-8'))",
             f"value = {expression}",
-            "if not value:",
+            "if value is None or value == '':",
             f"    raise SystemExit({error_message!r})",
             "print(value)",
         ]
     )
     return f"$({python_bin} -c {shlex.quote(script)})"
+
+
+def _json_env_assignment(
+    variable_name: str,
+    python_bin: str,
+    json_path: str,
+    expression: str,
+    error_message: str,
+) -> str:
+    value_command = _json_value_command(python_bin, json_path, expression, error_message)
+    return f'{variable_name}="{value_command}"'
 
 
 def _bootstrap_parts(remote_root: str) -> list[str]:
@@ -330,7 +398,7 @@ def _validate_upload_parts(remote_root: str) -> list[str]:
     return [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {PREPARED_READINESS_REPORT_PATH}",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {PREPARED_READINESS_REPORT_PATH}",
     ]
 
 
@@ -338,13 +406,149 @@ def _build_validate_upload_command(remote_root: str) -> str:
     return _bash_command(_validate_upload_parts(remote_root))
 
 
-def _batch_probe_parts(remote_root: str, *, head_type: str, report_file: str) -> list[str]:
+def _prepare_training_data_parts(python_bin: str) -> list[str]:
+    return [
+        f"{python_bin} {TRAINING_DIR}/enrich_anchor_metadata.py --metadata-dir data/metadata --report {TRAIN_ANCHOR_ENRICHMENT_REPORT} --min-group-size 15 --apply",
+        f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH} --min-group-size 15",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {READINESS_REPORT_PATH}",
+        f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --allow-shortfall",
+        f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} {_tier_pair_quota_args()} --report {PREPARED_READINESS_REPORT_PATH}",
+    ]
+
+
+def _tier_pair_quota_args() -> str:
+    return " ".join(
+        [
+            f"--train-tier-pair-min-a-s {TRAIN_TIER_PAIR_MIN_AS}",
+            f"--train-tier-pair-min-b-c {TRAIN_TIER_PAIR_MIN_BC}",
+            f"--train-tier-pair-min-a-c {TRAIN_TIER_PAIR_MIN_AC}",
+            f"--train-tier-pair-min-c-s {TRAIN_TIER_PAIR_MIN_CS}",
+            f"--train-tier-pair-cap-a-b {TRAIN_TIER_PAIR_CAP_AB}",
+            f"--val-tier-pair-min-a-s {VAL_TIER_PAIR_MIN_AS}",
+            f"--val-tier-pair-min-b-c {VAL_TIER_PAIR_MIN_BC}",
+            f"--val-tier-pair-min-a-c {VAL_TIER_PAIR_MIN_AC}",
+            f"--val-tier-pair-min-c-s {VAL_TIER_PAIR_MIN_CS}",
+            f"--val-tier-pair-cap-a-b {VAL_TIER_PAIR_CAP_AB}",
+        ]
+    )
+
+
+def _anchor_eval_args() -> str:
+    return " ".join(
+        [
+            f"--anchor-eval-n-per-tier {TRAIN_ANCHOR_EVAL_N_PER_TIER}",
+            f"--anchor-eval-bootstrap-seeds {TRAIN_ANCHOR_EVAL_BOOTSTRAP_SEEDS}",
+            f"--anchor-eval-min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT}",
+            "--anchor-eval-group-balanced",
+        ]
+    )
+
+
+def _remote_train_file(path: str) -> str:
+    return f"{TRAIN_ROOT}/{path}"
+
+
+def _batch_probe_parts(remote_root: str, *, head_type: str, input_size: str | int, report_file: str) -> list[str]:
     python_bin = _remote_python(remote_root)
     return [
         f"mkdir -p {TRAIN_REPORTS_DIR}",
-        f"{python_bin} {TRAINING_DIR}/probe_dinov3_batch_size.py --pairs-train training/data/pairs_train.csv --image-root data --model-name {shlex.quote(TRAIN_MODEL_NAME)} --input-size {TRAIN_INPUT_SIZE} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --dropout 0.1 --margin 0.3 --backbone-dtype auto --precision bf16 --batch-size-candidates {TRAIN_BATCH_SIZE_CANDIDATES} > {report_file}",
-        f'MICRO_BATCH="{_json_value_command(python_bin, report_file, "payload.get(\'selected_batch_size\')", "batch probe did not select a batch size")}"',
+        f"{python_bin} {TRAINING_DIR}/probe_dinov3_batch_size.py --pairs-train training/data/pairs_train.csv --image-root data --model-name {shlex.quote(TRAIN_MODEL_NAME)} --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --dropout 0.1 --margin 0.3 --backbone-dtype auto --precision bf16 --batch-size-candidates {TRAIN_BATCH_SIZE_CANDIDATES} > {report_file}",
+        _json_env_assignment(
+            "MICRO_BATCH",
+            python_bin,
+            report_file,
+            "payload.get('selected_batch_size')",
+            "batch probe did not select a batch size",
+        ),
         f'GRAD_ACCUM=$((({TRAIN_EFFECTIVE_BATCH_SIZE} + MICRO_BATCH - 1) / MICRO_BATCH))',
+    ]
+
+
+def _oom_retry_shell_parts() -> list[str]:
+    candidates = " ".join(str(candidate) for candidate in TRAIN_OOM_FALLBACK_BATCH_SIZE_CANDIDATES)
+    oom_pattern = "CUDA out of memory|OutOfMemoryError|torch\\.OutOfMemoryError"
+    return [
+        'export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"',
+        "next_micro_batch() {",
+        '  local current="$1"',
+        f'  for candidate in {candidates}; do',
+        '    if [ "$candidate" -lt "$current" ]; then',
+        '      printf "%s" "$candidate"',
+        "      return 0",
+        "    fi",
+        "  done",
+        "  return 0",
+        "}",
+        "resolve_stage_progress_args() {",
+        '  local checkpoint_dir_rel="$1"',
+        '  local checkpoint_dir_file="$2"',
+        '  local initial_progress_args="$3"',
+        '  local latest_checkpoint=""',
+        '  if [ -d "$checkpoint_dir_file" ]; then',
+        '    latest_checkpoint=$(find "$checkpoint_dir_file" -maxdepth 1 -type f -name "checkpoint_epoch_*.pt" | sort | tail -n 1)',
+        "  fi",
+        '  if [ -n "$latest_checkpoint" ]; then',
+        '    printf -- "--resume-from %s --resume-next-epoch" "${checkpoint_dir_rel}/$(basename "$latest_checkpoint")"',
+        "    return 0",
+        "  fi",
+        '  if [ -n "$initial_progress_args" ]; then',
+        '    eval "printf \'%s\' \\"$initial_progress_args\\""',
+        "  fi",
+        "}",
+        "run_training_with_oom_retry() {",
+        '  local stage_label="$1"',
+        '  local checkpoint_dir_rel="$2"',
+        '  local checkpoint_dir_file="$3"',
+        '  local initial_progress_args="$4"',
+        '  local command_template="$5"',
+        '  OOM_RETRY_LAST_FAILURE_MODE=""',
+        "  local attempt=1",
+        '  local current_micro_batch="${MICRO_BATCH}"',
+        "  while true; do",
+        '    MICRO_BATCH="$current_micro_batch"',
+        f'    GRAD_ACCUM=$((({TRAIN_EFFECTIVE_BATCH_SIZE} + MICRO_BATCH - 1) / MICRO_BATCH))',
+        '    PROGRESS_ARGS="$(resolve_stage_progress_args "$checkpoint_dir_rel" "$checkpoint_dir_file" "$initial_progress_args")"',
+        f'    ATTEMPT_LOG="{TRAIN_REPORTS_DIR}/${{stage_label}}_attempt_${{attempt}}_mb${{MICRO_BATCH}}.log"',
+        '    echo "[oom-retry] stage=$stage_label attempt=$attempt micro_batch=$MICRO_BATCH grad_accum=$GRAD_ACCUM progress_args=${PROGRESS_ARGS:-<none>}"',
+        "    set +e",
+        '    eval "$command_template" > >(tee "$ATTEMPT_LOG") 2> >(tee -a "$ATTEMPT_LOG" >&2)',
+        "    local status=$?",
+        "    set -e",
+        '    if [ "$status" -eq 0 ]; then',
+        '      OOM_RETRY_LAST_FAILURE_MODE=""',
+        "      return 0",
+        "    fi",
+        f'    if ! grep -Eiq "{oom_pattern}" "$ATTEMPT_LOG"; then',
+        '      OOM_RETRY_LAST_FAILURE_MODE="non_oom"',
+        '      echo "[oom-retry] stage=$stage_label failed with non-OOM status=$status"',
+        '      return "$status"',
+        "    fi",
+        '    local next_batch=""',
+        '    next_batch="$(next_micro_batch "$MICRO_BATCH")"',
+        '    if [ -z "$next_batch" ]; then',
+        '      OOM_RETRY_LAST_FAILURE_MODE="oom_exhausted"',
+        '      echo "[oom-retry] stage=$stage_label exhausted fallback candidates after OOM at micro_batch=$MICRO_BATCH"',
+        '      return "$status"',
+        "    fi",
+        '    echo "[oom-retry] stage=$stage_label OOM at micro_batch=$MICRO_BATCH; retrying with micro_batch=$next_batch"',
+        '    current_micro_batch="$next_batch"',
+        "    attempt=$((attempt + 1))",
+        "  done",
+        "}",
+    ]
+
+
+def _build_oom_retry_train_parts(
+    *,
+    stage_label: str,
+    checkpoint_dir: str,
+    checkpoint_dir_file: str,
+    initial_progress_args: str,
+    train_command: str,
+) -> list[str]:
+    return [
+        f'TRAIN_COMMAND_{stage_label}=$(cat <<\'EOF_{stage_label}\'\n{train_command}\nEOF_{stage_label}\n)',
+        f'run_training_with_oom_retry "{stage_label}" "{checkpoint_dir}" "{checkpoint_dir_file}" {shlex.quote(initial_progress_args)} "$TRAIN_COMMAND_{stage_label}"',
     ]
 
 
@@ -354,28 +558,93 @@ def _build_pairs_legacy_aligned_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode raw --metadata-dir data/metadata --image-root data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {READINESS_REPORT_PATH}",
-            f"{python_bin} {TRAINING_DIR}/prepare_snapshot.py --metadata-dir data/metadata --image-root data --output-manifest {TRAIN_SNAPSHOT_MANIFEST} --report {SNAPSHOT_REPORT_PATH}",
-            f"{python_bin} {TRAINING_DIR}/build_pairs.py --manifest {TRAIN_SNAPSHOT_MANIFEST} --output-dir training/data --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO}",
-            f"{python_bin} {TRAINING_DIR}/validate_training_readiness.py --mode prepared --metadata-dir data/metadata --image-root data --manifest {TRAIN_SNAPSHOT_MANIFEST} --prepared-dir training/data --baseline-readiness-report {READINESS_REPORT_PATH} --baseline-snapshot-report {SNAPSHOT_REPORT_PATH} --train-ratio {TRAIN_BUILD_PAIRS_TRAIN_RATIO} --val-ratio {TRAIN_BUILD_PAIRS_VAL_RATIO} --train-pairs-target {TRAIN_BUILD_PAIRS_TRAIN_TARGET} --val-pairs-target {TRAIN_BUILD_PAIRS_VAL_TARGET} --same-dept-ratio 0.5 --min-score-gap 5.0 --max-appearances {TRAIN_BUILD_PAIRS_MAX_APPEARANCES} --distance1-ratio {TRAIN_DISTANCE1_RATIO} --distance2-ratio {TRAIN_DISTANCE2_RATIO} --distance3-ratio {TRAIN_DISTANCE3_RATIO} --report {PREPARED_READINESS_REPORT_PATH}",
+            *_prepare_training_data_parts(python_bin),
         ]
     )
 
 
-def _build_ablation_command(remote_root: str) -> str:
+def _build_re_evaluate_baseline_command(remote_root: str) -> str:
+    python_bin = _remote_python(remote_root)
+    required_prepared_paths = (
+        TRAIN_PREPARED_PAIRS_VAL,
+        TRAIN_PREPARED_METADATA_TRAIN,
+        TRAIN_PREPARED_METADATA_VAL,
+    )
+    return _bash_command(
+        [
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
+            f"if [ ! -x {shlex.quote(python_bin)} ]; then",
+            *[f"  {command}" for command in _bootstrap_parts(remote_root)],
+            "fi",
+            "if "
+            + " || ".join(f"[ ! -f {_remote_train_file(path)} ]" for path in required_prepared_paths)
+            + "; then",
+            *[f"  {command}" for command in _prepare_training_data_parts(python_bin)],
+            "fi",
+            f"mkdir -p {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
+            f"{python_bin} {TRAINING_DIR}/reevaluate_checkpoint.py --checkpoint {TRAIN_BASELINE_CHECKPOINT} --pairs-val training/data/pairs_val.csv --metadata-train training/data/metadata_train.csv --metadata-eval training/data/metadata_val.csv --image-root data --anchors-output {TRAIN_BASELINE_ANCHORS} --output {TRAIN_BASELINE_REPORT} --batch-size 8 --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --device cuda --precision bf16",
+        ]
+    )
+
+
+def _build_variant_keep_best_only_parts(
+    python_bin: str,
+    *,
+    checkpoint_dir_file: str,
+    registry_report_file: str,
+) -> list[str]:
+    selected_checkpoint = _json_value_command(
+        python_bin,
+        registry_report_file,
+        "payload.get('selected_best_checkpoint_after_compare')",
+        "selected best checkpoint missing from variant registry",
+    )
+    return [
+        f'SELECTED_VARIANT_CHECKPOINT_REL="{selected_checkpoint}"',
+        f'SELECTED_VARIANT_CHECKPOINT="{TRAIN_ROOT}/${{SELECTED_VARIANT_CHECKPOINT_REL}}"',
+        f'find {shlex.quote(checkpoint_dir_file)} -maxdepth 1 -type f -name "checkpoint_epoch_*.pt" ! -path "$SELECTED_VARIANT_CHECKPOINT" -delete',
+        f'ln -sfn "$(basename "$SELECTED_VARIANT_CHECKPOINT")" {shlex.quote(f"{checkpoint_dir_file}/best_model.pt")}',
+    ]
+
+
+def _build_prune_non_winner_variant_checkpoints_parts(
+    python_bin: str,
+    *,
+    summary_report_file: str,
+    summary_label: str,
+    variants: tuple[dict[str, object], ...],
+    variants_root_dir_file: str,
+) -> list[str]:
+    winner_name_var = f"{summary_label.upper()}_WINNER_NAME"
+    parts = [
+        _json_env_assignment(
+            winner_name_var,
+            python_bin,
+            summary_report_file,
+            "payload.get('winner_name')",
+            f"{summary_label} winner name missing",
+        )
+    ]
+    for variant in variants:
+        variant_name = str(variant["name"])
+        parts.append(
+            f'if [ "${winner_name_var}" != "{variant_name}" ]; then rm -rf {shlex.quote(f"{variants_root_dir_file}/{variant_name}")}; fi'
+        )
+    return parts
+
+
+def _build_frozen_ablation_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     parts = [
         "set -euo pipefail",
         f"cd {shlex.quote(remote_root)}",
-        * _batch_probe_parts(
-            remote_root,
-            head_type="mlp_small",
-            report_file=TRAIN_BATCH_PROBE_REPORT_FILE,
-        ),
         f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
+        *_oom_retry_shell_parts(),
     ]
-    for variant in ABLATION_VARIANTS:
+    for variant in FROZEN_ABLATION_VARIANTS:
         name = str(variant["name"])
+        input_size = int(variant["input_size"])
         head_type = str(variant["head_type"])
         learning_rate = float(variant["learning_rate"])
         weight_decay = float(variant["weight_decay"])
@@ -389,11 +658,29 @@ def _build_ablation_command(remote_root: str) -> str:
         anchors_path_file = f"{TRAIN_ANCHORS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate_anchors.pt"
         train_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
         train_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
+        probe_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe_{name}.json"
         parts.extend(
             [
                 f"rm -rf {checkpoint_dir_file}",
-                f"rm -f {candidate_report_file} {registry_report_file} {anchors_path_file} {train_report_file}",
-                f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 5 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {TRAIN_INPUT_SIZE} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --early-stopping-metric anchor_tier_accuracy --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                f"rm -f {candidate_report_file} {registry_report_file} {anchors_path_file} {train_report_file} {probe_report_file}",
+                *_batch_probe_parts(
+                    remote_root,
+                    head_type=head_type,
+                    input_size=input_size,
+                    report_file=probe_report_file,
+                ),
+                *_build_oom_retry_train_parts(
+                    stage_label=f"frozen_{name}",
+                    checkpoint_dir=checkpoint_dir,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    initial_progress_args="",
+                    train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 6 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate {learning_rate} --weight-decay {weight_decay} --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {input_size} --feature-pool {TRAIN_FEATURE_POOL} --head-type {head_type} --freeze-backbone --unfreeze-last-n-layers 0 --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}",
+                ),
+                *_build_variant_keep_best_only_parts(
+                    python_bin,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    registry_report_file=registry_report_file,
+                ),
             ]
         )
     return _bash_command(parts)
@@ -403,13 +690,151 @@ def _build_select_ablation_winner_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     candidate_args = " ".join(
         f"--candidate {variant['name']}={REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{variant['name']}_registry.json"
-        for variant in ABLATION_VARIANTS
+        for variant in FROZEN_ABLATION_VARIANTS
     )
     return _bash_command(
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
-            f"{python_bin} {TRAINING_DIR}/select_ablation_winner.py {candidate_args} --output {TRAIN_ABLATION_REPORT}",
+            f"{python_bin} {TRAINING_DIR}/select_ablation_winner.py {candidate_args} --min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT} --output {TRAIN_FROZEN_ABLATION_REPORT}",
+        ]
+    )
+
+
+def _build_unfreeze_ablation_command(remote_root: str) -> str:
+    python_bin = _remote_python(remote_root)
+    winner_metric = _json_value_command(
+        python_bin,
+        TRAIN_FROZEN_ABLATION_REPORT_FILE,
+        "payload.get('winner_metrics', {}).get('anchor_tier_accuracy_mean') or payload.get('winner_metrics', {}).get('anchor_tier_accuracy')",
+        "winner metric missing from frozen ablation report",
+    )
+    parts = [
+        "set -euo pipefail",
+        f"cd {shlex.quote(remote_root)}",
+        *_oom_retry_shell_parts(),
+        f'FROZEN_WINNER_METRIC="{winner_metric}"',
+        "python3 - \"$FROZEN_WINNER_METRIC\" <<'PY'\nimport json, sys\nfrom pathlib import Path\nvalue = float(sys.argv[1])\nout = Path('" + TRAIN_UNFREEZE_ABLATION_REPORT_FILE + "')\nout.parent.mkdir(parents=True, exist_ok=True)\nif value >= 0.56:\n    out.write_text(json.dumps({'skipped': True, 'reason': 'frozen_winner_meets_threshold', 'threshold': 0.56}, indent=2, ensure_ascii=False), encoding='utf-8')\nPY",
+        'if python3 - "$FROZEN_WINNER_METRIC" <<\'PY\'\nimport sys\nsys.exit(0 if float(sys.argv[1]) >= 0.56 else 1)\nPY\nthen exit 0; fi',
+        _json_env_assignment(
+            "FROZEN_WINNER_CHECKPOINT",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_checkpoint')",
+            "frozen winner checkpoint missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_HEAD_TYPE",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('head_type')",
+            "frozen winner head type missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_INPUT_SIZE",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('input_size')",
+            "frozen winner input size missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_LR",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('learning_rate')",
+            "frozen winner lr missing",
+        ),
+        _json_env_assignment(
+            "FROZEN_WINNER_WEIGHT_DECAY",
+            python_bin,
+            TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            "payload.get('winner_config', {}).get('weight_decay')",
+            "frozen winner weight decay missing",
+        ),
+        'UNFREEZE_INPUT_SIZE="$(python3 - "$FROZEN_WINNER_INPUT_SIZE" <<\'PY\'\nimport sys\nprint(min(int(float(sys.argv[1])), ' + str(TRAIN_UNFREEZE_MAX_INPUT_SIZE) + '))\nPY\n)"',
+        *_build_prune_non_winner_variant_checkpoints_parts(
+            python_bin,
+            summary_report_file=TRAIN_FROZEN_ABLATION_REPORT_FILE,
+            summary_label="frozen",
+            variants=FROZEN_ABLATION_VARIANTS,
+            variants_root_dir_file=f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation",
+        ),
+        'HALF_WINNER_LR="$(python3 - "$FROZEN_WINNER_LR" <<\'PY\'\nimport sys\nprint(float(sys.argv[1]) / 2.0)\nPY\n)"',
+        f"mkdir -p {TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation {TRAIN_REPORTS_DIR} {TRAIN_ANCHORS_DIR}",
+    ]
+    for variant in UNFREEZE_ABLATION_VARIANTS:
+        name = str(variant["name"])
+        unfreeze_last_n_layers = int(variant["unfreeze_last_n_layers"])
+        backbone_learning_rate_scale = float(variant["backbone_learning_rate_scale"])
+        checkpoint_dir = f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/ablation/{name}"
+        checkpoint_dir_file = f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/ablation/{name}"
+        candidate_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate.json"
+        candidate_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate.json"
+        registry_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_registry.json"
+        registry_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_registry.json"
+        anchors_path = f"{ANCHORS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate_anchors.pt"
+        anchors_path_file = f"{TRAIN_ANCHORS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_candidate_anchors.pt"
+        train_report = f"{REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
+        train_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_ablation_{name}_train.json"
+        probe_report_file = f"{TRAIN_REPORTS_DIR}/{TRAIN_MODEL_SLUG}_batch_probe_{name}.json"
+        stage_label = f"unfreeze_{name}"
+        train_command = f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {checkpoint_dir} --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 4 --warmup-epochs 1 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$HALF_WINNER_LR\" --weight-decay \"$FROZEN_WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale {backbone_learning_rate_scale} --dropout 0.1 --margin 0.3 --input-size \"$UNFREEZE_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$FROZEN_WINNER_HEAD_TYPE\" --no-freeze-backbone --unfreeze-last-n-layers {unfreeze_last_n_layers} --patience 2 --restart-from-best-patience 0 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {train_report} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {anchors_path} --postprocess-report {candidate_report} --postprocess-registry {registry_report}"
+        skip_on_failure_command = f"""if ! run_training_with_oom_retry "{stage_label}" "{checkpoint_dir}" "{checkpoint_dir_file}" {shlex.quote("--initialize-from $FROZEN_WINNER_CHECKPOINT")} "$TRAIN_COMMAND_{stage_label}"; then
+if [ "${{OOM_RETRY_LAST_FAILURE_MODE:-}}" != "oom_exhausted" ]; then
+  exit 1
+fi
+python3 - "{name}" "{TRAIN_UNFREEZE_ABLATION_REPORT_FILE}" "$UNFREEZE_INPUT_SIZE" "{unfreeze_last_n_layers}" <<'PY'
+import json, sys
+from pathlib import Path
+variant_name, output_path, input_size, unfreeze_last_n_layers = sys.argv[1:5]
+out = Path(output_path)
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({{
+    "skipped": True,
+    "reason": "oom_minimum_unfreeze_config",
+    "failed_variant": variant_name,
+    "attempted_input_size": int(input_size),
+    "attempted_unfreeze_last_n_layers": int(unfreeze_last_n_layers),
+}}, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+exit 0
+fi"""
+        parts.extend(
+            [
+                f"rm -rf {checkpoint_dir_file}",
+                f"rm -f {candidate_report_file} {registry_report_file} {anchors_path_file} {train_report_file} {probe_report_file}",
+                *_batch_probe_parts(
+                    remote_root,
+                    head_type="$FROZEN_WINNER_HEAD_TYPE",
+                    input_size="$UNFREEZE_INPUT_SIZE",
+                    report_file=probe_report_file,
+                ),
+                f'TRAIN_COMMAND_{stage_label}=$(cat <<\'EOF_{stage_label}\'\n{train_command}\nEOF_{stage_label}\n)',
+                skip_on_failure_command,
+                *_build_variant_keep_best_only_parts(
+                    python_bin,
+                    checkpoint_dir_file=checkpoint_dir_file,
+                    registry_report_file=registry_report_file,
+                ),
+            ]
+        )
+    candidate_args = " ".join(
+        f"--candidate {variant['name']}={REPORTS_REL_DIR}/{TRAIN_MODEL_SLUG}_ablation_{variant['name']}_registry.json"
+        for variant in UNFREEZE_ABLATION_VARIANTS
+    )
+    parts.append(
+        f"{python_bin} {TRAINING_DIR}/select_ablation_winner.py {candidate_args} --min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT} --output {TRAIN_UNFREEZE_ABLATION_REPORT}"
+    )
+    return _bash_command(parts)
+
+
+def _build_select_overall_winner_command(remote_root: str) -> str:
+    python_bin = _remote_python(remote_root)
+    return _bash_command(
+        [
+            "set -euo pipefail",
+            f"cd {shlex.quote(remote_root)}",
+            f"{python_bin} {TRAINING_DIR}/select_overall_winner.py --summary frozen={TRAIN_FROZEN_ABLATION_REPORT} --summary unfreeze={TRAIN_UNFREEZE_ABLATION_REPORT} --min-improvement {TRAIN_ANCHOR_EVAL_MIN_IMPROVEMENT} --output {TRAIN_OVERALL_WINNER_REPORT}",
         ]
     )
 
@@ -449,21 +874,45 @@ def _build_full_fresh_command(remote_root: str) -> str:
     python_bin = _remote_python(remote_root)
     winner_head_type = _json_value_command(
         python_bin,
-        TRAIN_ABLATION_REPORT_FILE,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
         "payload.get('winner_config', {}).get('head_type')",
         "winner head type missing from ablation report",
     )
+    winner_input_size = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('input_size')",
+        "winner input size missing from overall winner report",
+    )
     winner_learning_rate = _json_value_command(
         python_bin,
-        TRAIN_ABLATION_REPORT_FILE,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
         "payload.get('winner_config', {}).get('learning_rate')",
         "winner learning rate missing from ablation report",
     )
     winner_weight_decay = _json_value_command(
         python_bin,
-        TRAIN_ABLATION_REPORT_FILE,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
         "payload.get('winner_config', {}).get('weight_decay')",
         "winner weight decay missing from ablation report",
+    )
+    winner_backbone_lr_scale = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('backbone_learning_rate_scale', 0.1)",
+        "winner backbone lr scale missing from overall winner report",
+    )
+    winner_freeze_backbone = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('freeze_backbone', True)",
+        "winner freeze_backbone missing from overall winner report",
+    )
+    winner_unfreeze_last_n_layers = _json_value_command(
+        python_bin,
+        TRAIN_OVERALL_WINNER_REPORT_FILE,
+        "payload.get('winner_config', {}).get('unfreeze_last_n_layers', 0)",
+        "winner unfreeze depth missing from overall winner report",
     )
     selected_checkpoint_value = _json_value_command(
         python_bin,
@@ -475,16 +924,29 @@ def _build_full_fresh_command(remote_root: str) -> str:
         [
             "set -euo pipefail",
             f"cd {shlex.quote(remote_root)}",
+            *_oom_retry_shell_parts(),
             f'WINNER_HEAD_TYPE="{winner_head_type}"',
+            f'WINNER_INPUT_SIZE="{winner_input_size}"',
             f'WINNER_LR="{winner_learning_rate}"',
             f'WINNER_WEIGHT_DECAY="{winner_weight_decay}"',
+            f'WINNER_BACKBONE_LR_SCALE="{winner_backbone_lr_scale}"',
+            f'WINNER_FREEZE_BACKBONE="{winner_freeze_backbone}"',
+            f'WINNER_UNFREEZE_LAST_N_LAYERS="{winner_unfreeze_last_n_layers}"',
+            'if [ "$WINNER_FREEZE_BACKBONE" = "True" ] || [ "$WINNER_FREEZE_BACKBONE" = "true" ]; then FREEZE_FLAG="--freeze-backbone"; else FREEZE_FLAG="--no-freeze-backbone"; fi',
             * _batch_probe_parts(
                 remote_root,
                 head_type="$WINNER_HEAD_TYPE",
+                input_size="$WINNER_INPUT_SIZE",
                 report_file=TRAIN_BATCH_PROBE_REPORT_FILE,
             ),
             * _build_archive_reset_parts(),
-            f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 30 --warmup-epochs 2 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$WINNER_LR\" --weight-decay \"$WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale 0.1 --dropout 0.1 --margin 0.3 --input-size {TRAIN_INPUT_SIZE} --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$WINNER_HEAD_TYPE\" --freeze-backbone --unfreeze-last-n-layers 0 --patience 8 --early-stopping-metric anchor_tier_accuracy --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
+            *_build_oom_retry_train_parts(
+                stage_label="full_fresh",
+                checkpoint_dir=f"{CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full",
+                checkpoint_dir_file=f"{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}/full",
+                initial_progress_args="",
+                train_command=f"{python_bin} {TRAINING_DIR}/train_dinov3.py --pairs-train training/data/pairs_train.csv --pairs-val training/data/pairs_val.csv --image-root data --output-dir {CHECKPOINTS_REL_DIR}/{TRAIN_MODEL_SLUG}/full --model-name {shlex.quote(TRAIN_MODEL_NAME)} --backbone-dtype auto --epochs 24 --warmup-epochs 2 --batch-size \"$MICRO_BATCH\" --gradient-accumulation-steps \"$GRAD_ACCUM\" --learning-rate \"$WINNER_LR\" --weight-decay \"$WINNER_WEIGHT_DECAY\" --backbone-learning-rate-scale \"$WINNER_BACKBONE_LR_SCALE\" --dropout 0.1 --margin 0.3 --input-size \"$WINNER_INPUT_SIZE\" --feature-pool {TRAIN_FEATURE_POOL} --head-type \"$WINNER_HEAD_TYPE\" $FREEZE_FLAG --unfreeze-last-n-layers \"$WINNER_UNFREEZE_LAST_N_LAYERS\" --patience 6 --restart-from-best-patience 3 --early-stopping-metric anchor_tier_accuracy {_anchor_eval_args()} --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --precision bf16 $PROGRESS_ARGS --report {TRAIN_FULL_TRAIN_REPORT} --postprocess-metadata-train training/data/metadata_train.csv --postprocess-metadata-eval training/data/metadata_val.csv --postprocess-anchors-output {TRAIN_FULL_CANDIDATE_ANCHORS} --postprocess-report {TRAIN_FULL_CANDIDATE_REPORT} --postprocess-registry {TRAIN_FULL_REGISTRY}",
+            ),
             f'SELECTED_CHECKPOINT="{selected_checkpoint_value}"',
             f"{python_bin} {TRAINING_DIR}/build_anchors_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --metadata training/data/metadata_train.csv --image-root data --output {TRAIN_FULL_FINAL_ANCHORS} --report {TRAIN_FULL_FINAL_ANCHOR_REPORT}",
             f"{python_bin} {TRAINING_DIR}/evaluate_dinov3.py --checkpoint \"$SELECTED_CHECKPOINT\" --pairs-val training/data/pairs_val.csv --image-root data --anchors {TRAIN_FULL_FINAL_ANCHORS} --metadata-eval training/data/metadata_val.csv --num-workers {TRAIN_NUM_WORKERS} --prefetch-factor {TRAIN_PREFETCH_FACTOR} --output {TRAIN_FULL_FINAL_REPORT}",
@@ -499,10 +961,16 @@ def build_stage_command(stage: str, remote_root: str) -> str:
         return _build_validate_upload_command(remote_root)
     if stage == "build-pairs-legacy-aligned":
         return _build_pairs_legacy_aligned_command(remote_root)
-    if stage == "ablation":
-        return _build_ablation_command(remote_root)
+    if stage == "re-evaluate-baseline":
+        return _build_re_evaluate_baseline_command(remote_root)
+    if stage == "frozen-ablation":
+        return _build_frozen_ablation_command(remote_root)
     if stage == "select-ablation-winner":
         return _build_select_ablation_winner_command(remote_root)
+    if stage == "unfreeze-ablation":
+        return _build_unfreeze_ablation_command(remote_root)
+    if stage == "select-overall-winner":
+        return _build_select_overall_winner_command(remote_root)
     if stage == "full-fresh":
         return _build_full_fresh_command(remote_root)
     raise SystemExit(f"Unsupported stage: {stage}")
@@ -661,9 +1129,193 @@ def build_remote_prune_command(
     return _bash_command(command_parts)
 
 
+def build_hourly_checkpoint_janitor_script(remote_root: str) -> str:
+    checkpoints_root = f"{remote_root}/{TRAIN_CHECKPOINTS_DIR}/{TRAIN_MODEL_SLUG}"
+    overall_winner_report = f"{remote_root}/{TRAIN_OVERALL_WINNER_REPORT_FILE}"
+    full_dir = f"{checkpoints_root}/full"
+    metadata_script = """import json
+import sys
+from pathlib import Path
+
+report_path = Path(sys.argv[1])
+full_dir = Path(sys.argv[2])
+payload = json.loads(report_path.read_text(encoding="utf-8"))
+winner_checkpoint_value = payload.get("winner_checkpoint")
+if not winner_checkpoint_value:
+    raise SystemExit("winner_checkpoint missing from overall winner report")
+
+train_root = report_path.parents[2]
+winner_checkpoint_path = Path(winner_checkpoint_value)
+if not winner_checkpoint_path.is_absolute():
+    winner_checkpoint_path = train_root / winner_checkpoint_path
+winner_checkpoint_path = winner_checkpoint_path.resolve()
+if not winner_checkpoint_path.exists():
+    raise SystemExit(f"winner checkpoint missing: {winner_checkpoint_path}")
+
+keep_checkpoints = [winner_checkpoint_path]
+link_specs = [(winner_checkpoint_path.parent / "best_model.pt", winner_checkpoint_path.name)]
+
+if full_dir.exists():
+    full_checkpoints = sorted(full_dir.glob("checkpoint_epoch_*.pt"))
+    if full_checkpoints:
+        keep_checkpoints.append(full_checkpoints[-1].resolve())
+    full_best_link = full_dir / "best_model.pt"
+    if full_best_link.is_symlink():
+        full_best_target = full_best_link.resolve()
+        if full_best_target.exists():
+            keep_checkpoints.append(full_best_target)
+            link_specs.append((full_best_link, full_best_target.name))
+
+seen_checkpoints = set()
+for checkpoint in keep_checkpoints:
+    checkpoint_text = str(checkpoint)
+    if checkpoint_text in seen_checkpoints:
+        continue
+    seen_checkpoints.add(checkpoint_text)
+    print(f"KEEP\\t{checkpoint_text}")
+
+seen_links = set()
+for link_path, target_name in link_specs:
+    link_key = (str(link_path), str(target_name))
+    if link_key in seen_links:
+        continue
+    seen_links.add(link_key)
+    print(f"LINK\\t{link_path}\\t{target_name}")
+"""
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            f"ROOT={shlex.quote(checkpoints_root)}",
+            f"OVERALL_WINNER_REPORT={shlex.quote(overall_winner_report)}",
+            f"FULL_DIR={shlex.quote(full_dir)}",
+            'LOCK="/tmp/mirip-hourly-checkpoint-janitor.lock"',
+            'exec 9>"$LOCK"',
+            "if ! flock -n 9; then",
+            "  exit 0",
+            "fi",
+            "log() {",
+            "  printf '[%s] %s\\n' \"$(date '+%Y-%m-%d %H:%M:%S %Z')\" \"$*\"",
+            "}",
+            'if [ ! -f "$OVERALL_WINNER_REPORT" ]; then',
+            '  log "overall winner report missing; skipped"',
+            "  exit 0",
+            "fi",
+            "mapfile -t KEEP_METADATA < <(python3 - \"$OVERALL_WINNER_REPORT\" \"$FULL_DIR\" <<'PY'\n"
+            + metadata_script
+            + "\nPY\n)",
+            'if [ "${#KEEP_METADATA[@]}" -eq 0 ]; then',
+            '  log "no keep metadata resolved; skipped"',
+            "  exit 0",
+            "fi",
+            "KEEP_CHECKPOINTS=()",
+            "LINK_PATHS=()",
+            "LINK_TARGETS=()",
+            'for entry in "${KEEP_METADATA[@]}"; do',
+            "  IFS=$'\\t' read -r kind path target <<<\"$entry\"",
+            '  case "$kind" in',
+            '    KEEP) KEEP_CHECKPOINTS+=("$path") ;;',
+            '    LINK) LINK_PATHS+=("$path"); LINK_TARGETS+=("$target") ;;',
+            "  esac",
+            "done",
+            'if [ "${#KEEP_CHECKPOINTS[@]}" -eq 0 ]; then',
+            '  log "no checkpoints resolved for pruning; skipped"',
+            "  exit 0",
+            "fi",
+            'KEEP_FILE="$(mktemp)"',
+            'cleanup() { rm -f "$KEEP_FILE"; }',
+            "trap cleanup EXIT",
+            'printf "%s\\n" "${KEEP_CHECKPOINTS[@]}" | sort -u > "$KEEP_FILE"',
+            "deleted_checkpoints=0",
+            "deleted_links=0",
+            "while IFS= read -r -d '' checkpoint_path; do",
+            '  if grep -Fxq "$checkpoint_path" "$KEEP_FILE"; then',
+            "    continue",
+            "  fi",
+            '  rm -f -- "$checkpoint_path"',
+            "  deleted_checkpoints=$((deleted_checkpoints + 1))",
+            "done < <(find \"$ROOT\" -type f -name \"checkpoint_epoch_*.pt\" -print0)",
+            "while IFS= read -r -d '' best_link; do",
+            '  rm -f -- "$best_link"',
+            "  deleted_links=$((deleted_links + 1))",
+            "done < <(find \"$ROOT\" \\( -type l -o -type f \\) -name \"best_model.pt\" -print0)",
+            'for index in "${!LINK_PATHS[@]}"; do',
+            '  mkdir -p "$(dirname "${LINK_PATHS[$index]}")"',
+            '  ln -sfn "${LINK_TARGETS[$index]}" "${LINK_PATHS[$index]}"',
+            "done",
+            "deleted_dirs=0",
+            "while IFS= read -r empty_dir; do",
+            '  rmdir "$empty_dir" && deleted_dirs=$((deleted_dirs + 1)) || true',
+            "done < <(find \"$ROOT\" -mindepth 1 -depth -type d -empty | sort)",
+            'log "kept=$(paste -sd, "$KEEP_FILE") deleted_checkpoints=$deleted_checkpoints deleted_links=$deleted_links recreated_links=${#LINK_PATHS[@]} deleted_dirs=$deleted_dirs"',
+        ]
+    )
+
+
+def build_hourly_checkpoint_janitor_loop_script(remote_root: str) -> str:
+    janitor_script = f"{remote_root}/{REMOTE_HOURLY_JANITOR_SCRIPT}"
+    janitor_log = f"{remote_root}/{REMOTE_HOURLY_JANITOR_LOG}"
+    return "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "set -euo pipefail",
+            "while true; do",
+            f'  /bin/bash {shlex.quote(janitor_script)} >> {shlex.quote(janitor_log)} 2>&1 || true',
+            "  sleep 3600",
+            "done",
+        ]
+    )
+
+
+def build_install_remote_hourly_janitor_command(remote_root: str) -> str:
+    janitor_script = build_hourly_checkpoint_janitor_script(remote_root)
+    loop_script = build_hourly_checkpoint_janitor_loop_script(remote_root)
+    janitor_script_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_SCRIPT}"
+    loop_script_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_LOOP_SCRIPT}"
+    pid_path = f"{remote_root}/{REMOTE_HOURLY_JANITOR_PID}"
+    write_script = "\n".join(
+        [
+            "from pathlib import Path",
+            f"files = [({janitor_script_path!r}, {janitor_script!r}), ({loop_script_path!r}, {loop_script!r})]",
+            "for path_text, content in files:",
+            "    path = Path(path_text)",
+            "    path.parent.mkdir(parents=True, exist_ok=True)",
+            "    path.write_text(content, encoding='utf-8')",
+            "    path.chmod(0o755)",
+        ]
+    )
+    return _bash_command(
+        [
+            "set -euo pipefail",
+            "python3 - <<'PY'\n" + write_script + "\nPY",
+            f'PID_FILE={shlex.quote(pid_path)}',
+            f'LOOP_PATH={shlex.quote(loop_script_path)}',
+            'if [ -f "$PID_FILE" ]; then',
+            '  OLD_PID="$(cat "$PID_FILE" 2>/dev/null || true)"',
+            '  if [ -n "$OLD_PID" ]; then kill "$OLD_PID" 2>/dev/null || true; fi',
+            "fi",
+            'pkill -f "$LOOP_PATH" 2>/dev/null || true',
+            'nohup /bin/bash "$LOOP_PATH" >/dev/null 2>&1 &',
+            'NEW_PID=$!',
+            'printf "%s\\n" "$NEW_PID" > "$PID_FILE"',
+            'sleep 1',
+            'ps -p "$NEW_PID" -o pid=,cmd=',
+        ]
+    )
+
+
 def execute_remote_command_over_ssh(client: VastClient, instance_id: int, remote_command: str) -> int:
     host, port = get_connection_info(client, instance_id)
     return run_local_command(_ssh_command(host, port, remote_command))
+
+
+def install_remote_hourly_janitor(config_path: str, instance_id: int) -> int:
+    config = load_toml(str(_resolve_repo_path(config_path)))
+    remote_root = config.get("workspace", {}).get("remote_root", "/workspace/mirip_v2")
+    api_key = require_env("VAST_API_KEY")
+    client = VastClient(api_key)
+    command = build_install_remote_hourly_janitor_command(remote_root)
+    return execute_remote_command_over_ssh(client, instance_id, command)
 
 
 def sync_prune(config_path: str, instance_id: int) -> int:
@@ -797,7 +1449,17 @@ def parse_args() -> argparse.Namespace:
     common.add_argument("--config", default=TRAIN_CONFIG_PATH)
     common.add_argument(
         "--stage",
-        choices=["bootstrap", "validate-upload", "build-pairs-legacy-aligned", "ablation", "select-ablation-winner", "full-fresh"],
+        choices=[
+            "bootstrap",
+            "validate-upload",
+            "build-pairs-legacy-aligned",
+            "re-evaluate-baseline",
+            "frozen-ablation",
+            "select-ablation-winner",
+            "unfreeze-ablation",
+            "select-overall-winner",
+            "full-fresh",
+        ],
         required=True,
     )
 
@@ -816,6 +1478,13 @@ def parse_args() -> argparse.Namespace:
     sync_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
     sync_cmd.add_argument("--instance-id", type=int)
 
+    janitor_cmd = subparsers.add_parser(
+        "install-remote-hourly-janitor",
+        help="Install and restart the remote hourly checkpoint janitor.",
+    )
+    janitor_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
+    janitor_cmd.add_argument("--instance-id", type=int)
+
     install_cmd = subparsers.add_parser("install-launch-agent", help="Install a 15-minute launchd sync/prune job.")
     install_cmd.add_argument("--config", default=TRAIN_CONFIG_PATH)
 
@@ -832,6 +1501,8 @@ def main() -> int:
         return pull_artifacts(args.config, resolve_instance_id(args.instance_id))
     if args.command == "sync-prune":
         return sync_prune(args.config, resolve_instance_id(args.instance_id))
+    if args.command == "install-remote-hourly-janitor":
+        return install_remote_hourly_janitor(args.config, resolve_instance_id(args.instance_id))
     if args.command == "install-launch-agent":
         return install_launch_agent(args.config)
     if args.command == "uninstall-launch-agent":
